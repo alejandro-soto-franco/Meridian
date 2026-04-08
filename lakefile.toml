@@ -1,0 +1,15 @@
+name = "Meridian"
+version = "0.1.0"
+keywords = ["metaprogramming", "proof-search", "tactics"]
+defaultTargets = ["Meridian"]
+
+[leanOptions]
+relaxedAutoImplicit = false
+
+[[require]]
+name = "mathlib"
+git = "https://github.com/leanprover-community/mathlib4"
+rev = "698d2b68b870f1712040ab0c233d34372d4b56df"
+
+[[lean_lib]]
+name = "Meridian"
