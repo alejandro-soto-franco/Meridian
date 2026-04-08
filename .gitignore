@@ -1,0 +1,8 @@
+.lake/
+lake-packages/
+build/
+.olean
+*.olean
+*.ilean
+*.trace
+docs/superpowers/
