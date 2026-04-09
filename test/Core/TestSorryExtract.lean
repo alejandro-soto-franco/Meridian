@@ -60,3 +60,16 @@ run_cmd do
   let names := sorryDecls.map (·.name)
   if !names.contains `sorry_thm then throwError "should find sorry_thm"
   logInfo s!"extractAllDeclsNoCoverage: OK ({decls.length} decls, {sorryDecls.length} with sorry)"
+
+-- Test CoverageResult construction
+run_cmd do
+  let cov : CoverageResult := {
+    category := .C
+    exactMatches := []
+    nearMisses := []
+  }
+  if cov.category != .C then throwError "category should be C"
+  logInfo "CoverageResult: OK"
+
+-- Integration test: #sorry_extract should run without error
+#sorry_extract
