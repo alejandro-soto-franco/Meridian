@@ -76,4 +76,20 @@ elab "#sorry_inventory" : command => do
     msg := msg ++ row ++ "\n"
   logInfo msg
 
+/-- `#sorry_inventory_all` scans all imported user modules. -/
+elab "#sorry_inventory_all" : command => do
+  let decls ← extractAllUserDeclsWithCoverage
+  let graph := buildDepGraph decls
+  let entries := buildInventory decls graph
+  if entries.isEmpty then
+    logInfo "No sorries found."
+    return
+  let header := s!"Sorry Inventory ({entries.length} sorries)\n" ++
+    String.ofList (List.replicate 60 '=') ++ "\n"
+  let mut msg := header
+  for (e, i) in entries.zip (List.range entries.length) do
+    let row ← liftTermElabM <| formatEntry (i + 1) e
+    msg := msg ++ row ++ "\n"
+  logInfo msg
+
 end Meridian.Core.Inventory

@@ -298,4 +298,24 @@ elab "#sorry_extract" : command => do
           msg := msg ++ s!" [{desc}]"
     logInfo msg
 
+/-- `#sorry_extract_all` scans all imported user modules (not just the current file). -/
+elab "#sorry_extract_all" : command => do
+  let decls ← extractAllUserDeclsWithCoverage
+  let sorryDecls := decls.filter (·.hasSorry)
+  if sorryDecls.isEmpty then
+    logInfo "No sorries found in user declarations."
+    return
+  for d in sorryDecls do
+    let sig ← liftTermElabM <| ppExpr d.type
+    let mut msg := s!"lemma {d.name}.sorried : {sig} := sorry"
+    for (cov, i) in d.coverages.zip (List.range d.coverages.length) do
+      msg := msg ++ s!"\n  -- sorry goal {i}: category {cov.category}"
+      for m in cov.exactMatches.take 5 do
+        msg := msg ++ s!"\n  --   exact match: {m}"
+      for nm in cov.nearMisses.take 5 do
+        msg := msg ++ s!"\n  --   near-miss ({nm.mismatchCount}): {nm.name}"
+        for desc in nm.mismatchDescriptions do
+          msg := msg ++ s!" [{desc}]"
+    logInfo msg
+
 end Meridian.Core.SorryExtract
