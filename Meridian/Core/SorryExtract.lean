@@ -144,47 +144,58 @@ def extractDeclNoCoverage (ci : ConstantInfo) : MeridianDecl :=
 def isCurrentModuleDecl (env : Environment) (declName : Name) : Bool :=
   env.getModuleIdxFor? declName |>.isNone
 
+/-- Fold helper: collect matching decls from both maps without materializing toList. -/
+private def collectDecls (env : Environment) (pred : Name → Bool) : List MeridianDecl :=
+  let r1 := env.constants.map₁.fold (init := ([] : List MeridianDecl)) fun acc name ci =>
+    if pred name && !name.isInternal then acc ++ [extractDeclNoCoverage ci] else acc
+  env.constants.map₂.foldl (init := r1) fun acc name ci =>
+    if pred name && !name.isInternal then acc ++ [extractDeclNoCoverage ci] else acc
+
 /-- Extract all declarations from the current module (no coverage yet). -/
 def extractAllDeclsNoCoverage : CommandElabM (List MeridianDecl) := do
   let env ← getEnv
-  let mut result : List MeridianDecl := []
-  for (name, ci) in env.constants.map₁.toList ++ env.constants.map₂.toList do
-    if isCurrentModuleDecl env name && !name.isInternal then
-      result := result ++ [extractDeclNoCoverage ci]
-  return result
+  return collectDecls env (isCurrentModuleDecl env)
 
 /-- Extract all user-defined declarations across all imported user modules + current module. -/
 def extractAllUserDecls : CommandElabM (List MeridianDecl) := do
   let env ← getEnv
-  let mut result : List MeridianDecl := []
-  for (name, ci) in env.constants.map₁.toList ++ env.constants.map₂.toList do
-    if (isCurrentModuleDecl env name || isUserDecl env name) && !name.isInternal then
-      result := result ++ [extractDeclNoCoverage ci]
-  return result
+  return collectDecls env (fun name => isCurrentModuleDecl env name || isUserDecl env name)
 
 /-! ## Mathlib DiscrTree Coverage -/
 
+/-- Cached DiscrTree, built once per process. -/
+private initialize discrTreeCache : IO.Ref (Option (DiscrTree Name)) ← IO.mkRef none
+
 /-- Build a `DiscrTree Name` from all Mathlib constants in the environment.
-    For each constant, peel the forall-telescope and index the conclusion. -/
+    Cached after the first call. -/
 def buildMathlibDiscrTree : MetaM (DiscrTree Name) := do
+  -- Check cache
+  match ← discrTreeCache.get with
+  | some tree => return tree
+  | none => pure ()
   let env ← getEnv
   let moduleNames := env.allImportedModuleNames
-  let mut tree : DiscrTree Name := {}
-  for (name, ci) in env.constants.map₂.toList do
+  -- Pre-compute a set of Mathlib module indices for O(1) lookup
+  let mut mathlibIdxs : Std.HashSet Nat := {}
+  for (mod, idx) in moduleNames.toList.zip (List.range moduleNames.size) do
+    if mod.getRoot == `Mathlib then
+      mathlibIdxs := mathlibIdxs.insert idx
+  -- Fold over map₂ directly (avoids materializing a 300k-entry List)
+  let tree ← env.constants.map₂.foldlM (init := ({} : DiscrTree Name)) fun tree name ci => do
     match env.getModuleIdxFor? name with
-    | none => continue
+    | none => return tree
     | some idx =>
-      if h : idx.toNat < moduleNames.size then
-        let modName := moduleNames[idx.toNat]
-        if modName.getRoot != `Mathlib then continue
-      else continue
-    -- Peel forall binders to get the conclusion
-    let conclusion ← forallTelescopeReducing ci.type fun _ body => pure body
-    if conclusion.isSort || conclusion.isMVar then continue
+      if !mathlibIdxs.contains idx.toNat then return tree
+    match ci with
+    | .thmInfo _ => pure ()
+    | _ => return tree
+    let ty := ci.type
+    if ty.isSort || ty.isMVar then return tree
     try
-      tree ← tree.insert conclusion name
+      tree.insert ty name
     catch _ =>
-      continue
+      return tree
+  discrTreeCache.set (some tree)
   return tree
 
 /-- Replace the `idx`-th argument of a function application with a fresh MVar. -/
@@ -207,38 +218,50 @@ private def describeMismatch (original : Expr) (idx : Nat) : MetaM String := do
   else
     return s!"arg {idx}: <out of range>"
 
-/-- Query the DiscrTree for coverage of a single sorry goal. -/
+/-- Maximum number of top-level arguments to consider for near-miss queries.
+    Goals with more args than this only get the first `maxNearMissArgs` checked. -/
+private def maxNearMissArgs : Nat := 8
+
+/-- Query the DiscrTree for coverage of a single sorry goal.
+    Tries exact match, then 1-mismatch, then 2-mismatch (capped at `maxNearMissArgs`). -/
 def queryCoverage (tree : DiscrTree Name) (goal : Expr) : MetaM CoverageResult := do
   -- Exact match
   let exactHits ← tree.getMatch goal
   if exactHits.size > 0 then
-    return { category := .A, exactMatches := exactHits.toList, nearMisses := [] }
-  -- 1-mismatch
-  let numArgs := goal.getAppArgs.size
+    return { category := .A, exactMatches := exactHits.toList.take 20, nearMisses := [] }
+  -- Cap the number of args to examine
+  let numArgs := min goal.getAppArgs.size maxNearMissArgs
+  if numArgs == 0 then
+    return { category := .C, exactMatches := [], nearMisses := [] }
   let mut allNearMisses : Array NearMiss := #[]
   let mut seen : NameSet := {}
+  -- 1-mismatch (stop early if we have enough)
   for i in [:numArgs] do
+    if allNearMisses.size >= 20 then break
     let modified ← replaceArgWithMVar goal i
     let hits ← tree.getMatch modified
-    for hit in hits do
+    for hit in hits.toList.take 5 do
       if !seen.contains hit then
         seen := seen.insert hit
         let desc ← describeMismatch goal i
         allNearMisses := allNearMisses.push
           { name := hit, mismatchCount := 1, mismatchDescriptions := [desc] }
-  -- 2-mismatch
-  for i in [:numArgs] do
-    for j in [i+1:numArgs] do
-      let modified ← replaceArgWithMVar goal i
-      let modified ← replaceArgWithMVar modified j
-      let hits ← tree.getMatch modified
-      for hit in hits do
-        if !seen.contains hit then
-          seen := seen.insert hit
-          let desc1 ← describeMismatch goal i
-          let desc2 ← describeMismatch goal j
-          allNearMisses := allNearMisses.push
-            { name := hit, mismatchCount := 2, mismatchDescriptions := [desc1, desc2] }
+  -- 2-mismatch (only if numArgs ≤ 6 and we haven't found enough 1-mismatches)
+  if numArgs ≤ 6 && allNearMisses.size < 10 then
+    for i in [:numArgs] do
+      if allNearMisses.size >= 20 then break
+      for j in [i+1:numArgs] do
+        if allNearMisses.size >= 20 then break
+        let modified ← replaceArgWithMVar goal i
+        let modified ← replaceArgWithMVar modified j
+        let hits ← tree.getMatch modified
+        for hit in hits.toList.take 5 do
+          if !seen.contains hit then
+            seen := seen.insert hit
+            let desc1 ← describeMismatch goal i
+            let desc2 ← describeMismatch goal j
+            allNearMisses := allNearMisses.push
+              { name := hit, mismatchCount := 2, mismatchDescriptions := [desc1, desc2] }
   let sorted := allNearMisses.toList.mergeSort (fun a b => a.mismatchCount < b.mismatchCount)
   if !sorted.isEmpty then
     return { category := .B, exactMatches := [], nearMisses := sorted }
