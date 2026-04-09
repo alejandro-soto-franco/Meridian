@@ -13,3 +13,8 @@ rev = "698d2b68b870f1712040ab0c233d34372d4b56df"
 
 [[lean_lib]]
 name = "Meridian"
+
+[[lean_lib]]
+name = "TestCore"
+srcDir = "test"
+globs = ["Core.TestSorryExtract", "Core.TestDepGraph", "Core.TestInventory", "Core.TestTheoremExtract", "Core.TestVerify", "Core.TestTransform", "Core.TestDisprove"]

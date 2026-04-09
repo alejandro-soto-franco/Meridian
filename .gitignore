@@ -6,3 +6,4 @@ build/
 *.ilean
 *.trace
 docs/superpowers/
+docs/specs/
