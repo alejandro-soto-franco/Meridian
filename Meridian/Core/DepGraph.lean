@@ -159,4 +159,11 @@ elab "#dep_graph" : command => do
   logInfo (toDOT graph)
   logInfo (toSummary graph)
 
+/-- `#dep_graph_all` scans all imported user modules. -/
+elab "#dep_graph_all" : command => do
+  let decls ← extractAllUserDeclsWithCoverage
+  let graph := buildDepGraph decls
+  logInfo (toDOT graph)
+  logInfo (toSummary graph)
+
 end Meridian.Core.DepGraph
