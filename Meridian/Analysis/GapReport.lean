@@ -92,4 +92,27 @@ elab "#gap_report" : command => do
       msg := msg ++ s!"   ... and {g.affectedDecls.length - 10} more\n"
   logInfo msg
 
+/-- `#gap_report_all` runs gap analysis across all imported user modules.
+
+    Mirrors `#sorry_inventory_all`: useful when invoking from a scratch buffer
+    or any file that doesn't itself contain the sorries you want to analyse. -/
+elab "#gap_report_all" : command => do
+  let decls ← extractAllUserDeclsWithCoverage
+  let graph := buildDepGraph decls
+  let groups ← liftTermElabM <| buildGapReport decls graph
+  if groups.isEmpty then
+    logInfo "No gaps found (no sorries in any imported user module)."
+    return
+  let mut msg := s!"Gap Report ({groups.length} gap categories)\n" ++
+    String.ofList (List.replicate 60 '=') ++ "\n"
+  for (g, i) in groups.zip (List.range groups.length) do
+    msg := msg ++ s!"\n{i + 1}. [{g.gapKind}] {g.description}\n"
+    msg := msg ++ s!"   Affected: {g.affectedDecls.length} declarations, "
+    msg := msg ++ s!"Total downstream impact: {g.totalImpact}\n"
+    for name in g.affectedDecls.take 10 do
+      msg := msg ++ s!"   - {name}\n"
+    if g.affectedDecls.length > 10 then
+      msg := msg ++ s!"   ... and {g.affectedDecls.length - 10} more\n"
+  logInfo msg
+
 end Meridian.Analysis.GapReport
