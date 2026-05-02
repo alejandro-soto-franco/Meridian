@@ -1,5 +1,8 @@
-# All declarations that directly depend on a chosen target (parameterise the
-# IRI on the literal below). Useful for "who breaks if I change X" analyses.
+# All declarations that directly depend on a chosen target. Edit the IRI
+# below to point at whatever you want to analyse ("who breaks if I change X").
+#
+# Default target: Init.Prelude.Eq — appears in essentially every Mathlib
+# theorem, so on a full dump this returns thousands of rows.
 PREFIX mer: <https://meridian.sotofranco.dev/ontology#>
 
 SELECT ?d

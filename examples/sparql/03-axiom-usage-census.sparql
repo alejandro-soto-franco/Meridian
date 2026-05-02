@@ -1,10 +1,13 @@
 # Census of axiom usage: which axioms are referenced, and by how many
-# declarations.
+# distinct declarations.
+#
+# Some dumps reference axioms that are not themselves typed as mer:Axiom in
+# the same dump (e.g. when the dump is module-local and the axiom lives in
+# Init). We use mer:usesAxiom directly without re-asserting the class.
 PREFIX mer: <https://meridian.sotofranco.dev/ontology#>
 
 SELECT ?axiom (COUNT(DISTINCT ?user) AS ?users)
 WHERE {
-  ?axiom a mer:Axiom .
   ?user mer:usesAxiom ?axiom .
 }
 GROUP BY ?axiom

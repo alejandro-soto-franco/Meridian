@@ -81,7 +81,7 @@ meridian_decompose
 
 ## RDF / SPARQL Export
 
-Meridian can dump the entire current Lean environment to a Turtle (`.ttl`) file aligned to the [Meridian ontology](Ontology/meridian.ttl). The dump is a knowledge graph: nodes are declarations (theorems, definitions, axioms, inductives, constructors, recursors, opaque defs), edges are direct dependencies and axiom usages. Output is suitable for loading into Apache Jena Fuseki, Stardog, GraphDB, or any RDF store.
+Meridian can dump the entire current Lean environment to a Turtle (`.ttl`) file aligned to the [Meridian ontology](Ontology/meridian.ttl) ([overview](Ontology/README.md), [SHACL shapes](Ontology/meridian-shapes.ttl)). The dump is a knowledge graph: nodes are declarations (theorems, definitions, axioms, inductives, constructors, recursors, opaque defs), edges are direct dependencies and axiom usages. Output is suitable for loading into Apache Jena Fuseki, Stardog, GraphDB, AWS Neptune, Blazegraph, or any SPARQL-capable triple store.
 
 ```lean
 -- Dump the entire environment (every imported constant included)
@@ -91,7 +91,16 @@ Meridian can dump the entire current Lean environment to a Turtle (`.ttl`) file 
 #export_rdf_local "out/local.ttl"
 ```
 
-The IRI scheme is `https://meridian.sotofranco.dev/lean/<module-path>#<decl-name>`, with module dots converted to slashes. A declaration in `Mathlib.Topology.Basic` named `Continuous` gets the IRI `<https://meridian.sotofranco.dev/lean/Mathlib/Topology/Basic#Continuous>`.
+The driver `Drivers/ExportMathlib.lean` imports `Mathlib` and emits the full corpus. Convenience targets ship in the `Makefile`:
+
+```bash
+make export-mathlib   # dump out/mathlib.ttl + .sha256
+make validate         # rdflib parse + class counts + 5 SPARQL queries
+make validate-shacl   # additionally run pyshacl against Ontology/meridian-shapes.ttl
+make release          # gzip + manifest, ready for `gh release create`
+```
+
+The IRI scheme is `https://meridian.sotofranco.dev/lean/<module-path>#<decl-name>`, with module dots converted to slashes. A declaration in `Mathlib.Topology.Basic` named `Continuous` gets the IRI `<https://meridian.sotofranco.dev/lean/Mathlib/Topology/Basic#Continuous>`. See [Ontology/README.md](Ontology/README.md) for the full IRI scheme, class hierarchy, and property tables.
 
 ### Loading into a SPARQL endpoint
 
@@ -112,6 +121,8 @@ The `examples/sparql/` directory ships five queries:
 | `04-direct-dependents-of.sparql` | All declarations directly depending on a chosen target |
 | `05-complexity-distribution.sparql` | Histogram of theorem type-size buckets |
 
+The queries are reasoning-agnostic — they use `rdfs:subClassOf*` property paths so they work whether or not the store materialises subclass inferences. For best results, load `Ontology/meridian.ttl` into the same dataset as the dump.
+
 Run any of them against the loaded endpoint:
 
 ```bash
@@ -122,11 +133,17 @@ curl -fsS -H 'Accept: application/sparql-results+json' \
 
 ### Validation
 
-The emitter has been validated against [rdflib](https://rdflib.readthedocs.io/): every dump produced by `#export_rdf` parses without error.
+`scripts/validate-dump.py` runs three layers of validation against any dump:
+
+1. Turtle parses cleanly via [rdflib](https://rdflib.readthedocs.io/).
+2. Class counts (theorems / definitions / axioms / inductives / constructors / recursors / opaques / modules / sorry-bearing).
+3. Conformance check: every IRI referenced via `mer:directlyDependsOn`, `mer:usesAxiom`, or `mer:inModule` is itself typed in the graph (orphans expected only on module-local dumps).
+4. All five example SPARQL queries succeed and return rows.
+5. *(Optional, with `--shacl`)* SHACL validation against `Ontology/meridian-shapes.ttl` via [pyshacl](https://github.com/RDFLib/pySHACL).
 
 ```bash
-uv run --with rdflib python3 -c \
-  "import rdflib; g=rdflib.Graph(); g.parse('out/local.ttl'); print(len(g))"
+uv run --quiet --with rdflib scripts/validate-dump.py out/mathlib.ttl
+uv run --quiet --with rdflib --with pyshacl scripts/validate-dump.py --shacl out/mathlib.ttl
 ```
 
 ## Domain Tactics (PDE)

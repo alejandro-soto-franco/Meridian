@@ -74,6 +74,10 @@ mer:Module a owl:Class ;
   rdfs:label "Module"@en ;
   rdfs:comment "A Lean source module (e.g. Mathlib.Topology.Basic)."@en .
 
+mer:Dump a owl:Class ;
+  rdfs:label "Dump"@en ;
+  rdfs:comment "Self-describing metadata block emitted at the end of every Turtle file."@en .
+
 #
 # Object properties
 #
@@ -141,3 +145,15 @@ mer:moduleName a owl:DatatypeProperty ;
   rdfs:range  xsd:string ;
   rdfs:label "module name"@en ;
   rdfs:comment "Dotted Lean module name (e.g. Mathlib.Topology.Basic)."@en .
+
+mer:declCount a owl:DatatypeProperty ;
+  rdfs:domain mer:Dump ;
+  rdfs:range  xsd:nonNegativeInteger ;
+  rdfs:label "declaration count"@en ;
+  rdfs:comment "Number of mer:Declaration subjects in this dump."@en .
+
+mer:moduleCount a owl:DatatypeProperty ;
+  rdfs:domain mer:Dump ;
+  rdfs:range  xsd:nonNegativeInteger ;
+  rdfs:label "module count"@en ;
+  rdfs:comment "Number of mer:Module subjects in this dump."@en .

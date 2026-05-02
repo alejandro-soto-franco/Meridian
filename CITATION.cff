@@ -1,0 +1,22 @@
+cff-version: 1.2.0
+message: "If you use Meridian, the Meridian ontology, or a Meridian-generated knowledge graph in published work, please cite this repository."
+title: "Meridian: a Lean 4 metaprogramming toolkit with OWL-aligned RDF/SPARQL export"
+authors:
+  - family-names: "Soto Franco"
+    given-names: "Alejandro Jose"
+    email: "sotofranco.eng@gmail.com"
+    orcid: "https://orcid.org/0009-0006-7100-6322"
+license: Apache-2.0
+repository-code: "https://github.com/alejandro-soto-franco/Meridian"
+url: "https://github.com/alejandro-soto-franco/Meridian"
+keywords:
+  - lean4
+  - mathlib
+  - metaprogramming
+  - knowledge-graph
+  - rdf
+  - sparql
+  - owl
+  - shacl
+  - formal-mathematics
+type: software

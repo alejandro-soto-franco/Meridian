@@ -1,0 +1,88 @@
+@prefix mer:  <https://meridian.sotofranco.dev/ontology#> .
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+#
+# Meridian SHACL Shapes
+#
+# Structural constraints for Meridian dumps. Use any SHACL processor
+# (TopBraid, Apache Jena `shacl validate`, pyshacl) to validate that a dump
+# conforms to these shapes.
+#
+# Example (pyshacl):
+#   uv run --with pyshacl --with rdflib pyshacl \
+#     -s Ontology/meridian-shapes.ttl \
+#     -e Ontology/meridian.ttl \
+#     out/mathlib.ttl
+#
+
+mer:DeclarationShape
+  a sh:NodeShape ;
+  sh:targetClass mer:Declaration ;
+  sh:property [
+    sh:path mer:declName ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+  ] ;
+  sh:property [
+    sh:path mer:hasSorry ;
+    sh:datatype xsd:boolean ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+  ] ;
+  sh:property [
+    sh:path mer:typeSize ;
+    sh:datatype xsd:nonNegativeInteger ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+  ] ;
+  sh:property [
+    sh:path mer:inNamespace ;
+    sh:datatype xsd:string ;
+    sh:maxCount 1 ;
+  ] ;
+  sh:property [
+    sh:path mer:sorryCount ;
+    sh:datatype xsd:nonNegativeInteger ;
+    sh:maxCount 1 ;
+  ] ;
+  sh:property [
+    sh:path mer:inModule ;
+    sh:class mer:Module ;
+    sh:maxCount 1 ;
+  ] ;
+  sh:property [
+    sh:path mer:directlyDependsOn ;
+    sh:class mer:Declaration ;
+  ] ;
+  sh:property [
+    sh:path mer:usesAxiom ;
+    sh:class mer:Axiom ;
+  ] .
+
+mer:ModuleShape
+  a sh:NodeShape ;
+  sh:targetClass mer:Module ;
+  sh:property [
+    sh:path mer:moduleName ;
+    sh:datatype xsd:string ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+  ] .
+
+mer:DumpShape
+  a sh:NodeShape ;
+  sh:targetClass mer:Dump ;
+  sh:property [
+    sh:path mer:declCount ;
+    sh:datatype xsd:nonNegativeInteger ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+  ] ;
+  sh:property [
+    sh:path mer:moduleCount ;
+    sh:datatype xsd:nonNegativeInteger ;
+    sh:minCount 1 ;
+    sh:maxCount 1 ;
+  ] .

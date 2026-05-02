@@ -1,13 +1,17 @@
-# Histogram of theorem type-size buckets. Bucketing is done by integer
-# division so the result is reproducible without server-side functions.
-PREFIX mer: <https://meridian.sotofranco.dev/ontology#>
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+# Histogram of theorem type-size buckets (50-unit-wide bins). Useful for
+# identifying outlier theorems with very large statement complexity.
+#
+# Reasoning-agnostic: walks rdf:type/rdfs:subClassOf* so subclass inference
+# is not required.
+PREFIX mer:  <https://meridian.sotofranco.dev/ontology#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
 
 SELECT ?bucket (COUNT(?d) AS ?n)
 WHERE {
-  ?d a mer:Theorem ;
+  ?d a/rdfs:subClassOf* mer:Theorem ;
      mer:typeSize ?size .
-  BIND ((xsd:integer(?size) / 50) AS ?bucket)
+  BIND (FLOOR(?size / 50) AS ?bucket)
 }
 GROUP BY ?bucket
 ORDER BY ?bucket
