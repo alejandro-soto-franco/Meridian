@@ -7,3 +7,4 @@ build/
 *.trace
 docs/superpowers/
 docs/specs/
+out/

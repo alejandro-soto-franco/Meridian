@@ -1,12 +1,14 @@
 # All sorry-bearing declarations and the count of declarations that depend on
 # them directly. Highest downstream impact first.
-PREFIX mer: <https://meridian.sotofranco.dev/ontology#>
+PREFIX mer:  <https://meridian.sotofranco.dev/ontology#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX xsd:  <http://www.w3.org/2001/XMLSchema#>
 
 SELECT ?d ?sorries (COUNT(?dep) AS ?downstream)
 WHERE {
-  ?d a mer:Declaration ;
-     mer:hasSorry true ;
-     mer:sorryCount ?sorries .
+  ?d a/rdfs:subClassOf* mer:Declaration ;
+     mer:hasSorry true .
+  OPTIONAL { ?d mer:sorryCount ?sorries . }
   OPTIONAL { ?dep mer:directlyDependsOn ?d . }
 }
 GROUP BY ?d ?sorries

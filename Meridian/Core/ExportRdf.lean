@@ -29,12 +29,42 @@ namespace Meridian.Core.ExportRdf
 open Lean Elab Command Meta
 open Meridian.Core.SorryExtract
 
+/-! ## Buffered writer
+
+`IO.FS.Handle.putStr` issues one syscall per call. Emitting ~300k declarations
+with ~50 short writes each is millions of syscalls, which dominates wall
+time. `Buf` accumulates into an `IO.Ref String` and flushes at a tunable
+byte threshold (~64 KiB), reducing syscall count by ~3 orders of magnitude. -/
+
+private structure Buf where
+  ref       : IO.Ref String
+  handle    : IO.FS.Handle
+  threshold : Nat
+
+private def Buf.create (h : IO.FS.Handle) (threshold : Nat := 65536) : IO Buf := do
+  let r ← IO.mkRef ""
+  return { ref := r, handle := h, threshold := threshold }
+
+private def Buf.write (b : Buf) (s : String) : IO Unit := do
+  b.ref.modify (· ++ s)
+  let cur ← b.ref.get
+  if cur.length ≥ b.threshold then
+    b.handle.putStr cur
+    b.ref.set ""
+
+private def Buf.flush (b : Buf) : IO Unit := do
+  let cur ← b.ref.get
+  if !cur.isEmpty then
+    b.handle.putStr cur
+    b.ref.set ""
+
 /-! ## IRI construction -/
 
 /-- Percent-encode bytes outside the conservative URL-safe set. We keep
     `A-Z a-z 0-9 - _ . ~ /` and `#` (since `#` is the fragment separator we
-    deliberately emit). Everything else becomes `%HH`. This is sufficient for
-    Lean's standard naming conventions. -/
+    deliberately emit). Everything else becomes `%HH`. Handles arbitrary
+    Unicode codepoints (French quotes, mathematical operators, etc.) by
+    encoding their UTF-8 byte sequence. -/
 private def percentEncode (s : String) : String :=
   let safe (c : Char) : Bool :=
     c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' || c == '#'
@@ -84,6 +114,10 @@ private def moduleIri (modName : Name) : String :=
   let slug := percentEncode (modulePath modName)
   s!"<https://meridian.sotofranco.dev/lean/{slug}>"
 
+/-- IRI of the synthetic dump-metadata subject. -/
+private def dumpMetaIri : String :=
+  "<https://meridian.sotofranco.dev/lean/_dump>"
+
 /-! ## Classification -/
 
 /-- Map a `ConstantInfo` to the most specific Meridian class. -/
@@ -115,6 +149,56 @@ private partial def exprSize : Expr → Nat
   | .proj _ _ e      => 1 + exprSize e
   | _                => 1
 
+/-! ## Equation-compiler bloat filter -/
+
+/-- True if the last component of `n` matches a pattern that the Lean
+    equation compiler or codegen emits as a derived helper, not a
+    user-declared entity. We keep `Name.isInternal` (covers `_aux_*`, leading
+    underscore) and add the patterns that escape it. Conservative: only
+    skip names that have no semantic content for downstream KG consumers. -/
+private def isDerivedHelper (n : Name) : Bool :=
+  match n with
+  | .str _ s =>
+    s == "inj" || s == "injEq" || s == "noConfusionType" || s == "noConfusion"
+    || s == "rec" || s == "recOn" || s == "casesOn" || s == "below" || s == "ibelow"
+    || s == "brecOn" || s == "binductionOn" || s == "ndrec" || s == "ndrecOn"
+    || s == "sizeOf" || s == "_sizeOf_1" || s == "_sizeOf_inst"
+    || s.startsWith "proof_" || s.startsWith "match_" || s.startsWith "_eq_"
+    || s.startsWith "eq_" && (s.drop 3).all Char.isDigit
+    || s.startsWith "_proof_" || s.startsWith "_match_"
+    || s.startsWith "_cstage" || s.startsWith "_sunfold"
+    || s.startsWith "_unsafe_rec"
+  | _ => false
+
+/-- Combined inclusion filter: skip Lean-internal names and equation-compiler
+    artefacts. -/
+private def includeConst (env : Environment) (name : Name) : Bool :=
+  if name.isInternal then false
+  else if isDerivedHelper name then false
+  else
+    -- Drop `Foo.proof_N` style trailing-numeric helpers that escape the
+    -- pattern check above (some Mathlib generators produce these).
+    match env.find? name with
+    | some _ => true
+    | none   => false
+
+/-! ## Dependency collection (extended) -/
+
+/-- Extension of `Meridian.Core.SorryExtract.collectDeps` that also includes
+    the structure name of each `.proj` node. The base version drops it. -/
+private partial def collectDepsExt (e : Expr) : NameSet :=
+  go e {}
+where
+  go : Expr → NameSet → NameSet
+  | .const n _,        acc => acc.insert n
+  | .app f a,          acc => go a (go f acc)
+  | .lam _ d b _,      acc => go b (go d acc)
+  | .forallE _ d b _,  acc => go b (go d acc)
+  | .letE _ t v b _,   acc => go b (go v (go t acc))
+  | .mdata _ e,        acc => go e acc
+  | .proj sn _ e,      acc => go e (acc.insert sn)
+  | _,                 acc => acc
+
 /-! ## Turtle escaping -/
 
 /-- Escape a string for use as a Turtle string literal (double-quoted form). -/
@@ -135,12 +219,22 @@ private def prologue : String :=
   "@prefix mer:  <https://meridian.sotofranco.dev/ontology#> .\n" ++
   "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n" ++
   "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n" ++
-  "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n\n"
+  "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n" ++
+  "@prefix dct:  <http://purl.org/dc/terms/> .\n\n"
 
-/-- Emit triples for a single declaration to the open file handle. Returns
-    the number of triples written (used for the summary log). -/
-private def emitDecl (h : IO.FS.Handle) (env : Environment) (name : Name)
-    (info : ConstantInfo) : IO Nat := do
+/-- Emit a graph-level metadata block describing the dump itself. -/
+private def emitDumpMeta (b : Buf) (declCount moduleCount : Nat) : IO Nat := do
+  b.write s!"{dumpMetaIri} a mer:Dump ;\n"
+  b.write s!"  dct:source \"Lean {Lean.versionString}\" ;\n"
+  b.write s!"  mer:declCount \"{declCount}\"^^xsd:nonNegativeInteger ;\n"
+  b.write s!"  mer:moduleCount \"{moduleCount}\"^^xsd:nonNegativeInteger .\n\n"
+  return 4
+
+/-- Build the full Turtle block for a single declaration as a single string.
+    Returns the string and the triple count. Single-string-then-write keeps
+    syscalls per declaration to one buffered append. -/
+private def renderDecl (env : Environment) (name : Name) (info : ConstantInfo)
+    : String × Nat := Id.run do
   let subj := declIri env name
   let cls  := classOf info
   let ns   := nameToDotted name.getPrefix
@@ -153,11 +247,11 @@ private def emitDecl (h : IO.FS.Handle) (env : Environment) (name : Name)
     | none   => 0
   let tSize := exprSize info.type
 
+  let typeDeps := collectDepsExt info.type
+  let valDeps := match info.value? with
+    | some v => collectDepsExt v
+    | none   => {}
   let directDeps : List Name :=
-    let typeDeps := collectDeps info.type
-    let valDeps := match info.value? with
-      | some v => collectDeps v
-      | none   => {}
     (typeDeps.merge valDeps).toList
       |>.filter (fun n => !n.isInternal && n != name)
 
@@ -166,111 +260,109 @@ private def emitDecl (h : IO.FS.Handle) (env : Environment) (name : Name)
     | some ci => isAxiomLike ci
     | none    => false
 
-  let mut trips : Nat := 0
-
-  -- Type assertion + scalar properties
-  h.putStr s!"{subj} a {cls} ;\n"
-  trips := trips + 1
-  h.putStr s!"  mer:declName \"{escapeLiteral fullName}\" ;\n"
+  let mut s := s!"{subj} a {cls} ;\n"
+  let mut trips : Nat := 1
+  s := s ++ s!"  mer:declName \"{escapeLiteral fullName}\" ;\n"
   trips := trips + 1
   if !ns.isEmpty then
-    h.putStr s!"  mer:inNamespace \"{escapeLiteral ns}\" ;\n"
+    s := s ++ s!"  mer:inNamespace \"{escapeLiteral ns}\" ;\n"
     trips := trips + 1
-  h.putStr s!"  mer:hasSorry \"{if hasS then "true" else "false"}\"^^xsd:boolean ;\n"
+  s := s ++ s!"  mer:hasSorry \"{if hasS then "true" else "false"}\"^^xsd:boolean ;\n"
   trips := trips + 1
   if sorryCount > 0 then
-    h.putStr s!"  mer:sorryCount \"{sorryCount}\"^^xsd:nonNegativeInteger ;\n"
+    s := s ++ s!"  mer:sorryCount \"{sorryCount}\"^^xsd:nonNegativeInteger ;\n"
     trips := trips + 1
-  h.putStr s!"  mer:typeSize \"{tSize}\"^^xsd:nonNegativeInteger"
+  s := s ++ s!"  mer:typeSize \"{tSize}\"^^xsd:nonNegativeInteger"
   trips := trips + 1
-
-  -- Module link (closes prior triple with `;` if module known)
   match moduleOf? env name with
   | some m =>
-    h.putStr s!" ;\n  mer:inModule {moduleIri m}"
+    s := s ++ s!" ;\n  mer:inModule {moduleIri m}"
     trips := trips + 1
   | none => pure ()
-
-  -- Direct dependencies
   if !directDeps.isEmpty then
-    h.putStr " ;\n  mer:directlyDependsOn "
+    s := s ++ " ;\n  mer:directlyDependsOn "
     let mut first := true
     for d in directDeps do
-      if first then first := false else h.putStr " , "
-      h.putStr (declIri env d)
+      if first then
+        first := false
+        s := s ++ declIri env d
+      else
+        s := s ++ " , " ++ declIri env d
       trips := trips + 1
-
-  -- Axiom usage
   if !axiomDeps.isEmpty then
-    h.putStr " ;\n  mer:usesAxiom "
+    s := s ++ " ;\n  mer:usesAxiom "
     let mut first := true
     for d in axiomDeps do
-      if first then first := false else h.putStr " , "
-      h.putStr (declIri env d)
+      if first then
+        first := false
+        s := s ++ declIri env d
+      else
+        s := s ++ " , " ++ declIri env d
       trips := trips + 1
-
-  h.putStr " .\n"
-  return trips
+  s := s ++ " .\n"
+  return (s, trips)
 
 /-- Emit module-name triples for every distinct module referenced in `seen`. -/
-private def emitModules (h : IO.FS.Handle) (seen : NameSet) : IO Nat := do
+private def emitModules (b : Buf) (seen : NameSet) : IO Nat := do
   let mut trips : Nat := 0
   for m in seen.toList do
-    h.putStr s!"{moduleIri m} a mer:Module ;\n"
-    h.putStr s!"  mer:moduleName \"{escapeLiteral (nameToDotted m)}\" .\n"
+    b.write s!"{moduleIri m} a mer:Module ;\n"
+    b.write s!"  mer:moduleName \"{escapeLiteral (nameToDotted m)}\" .\n"
     trips := trips + 2
   return trips
 
-/-- Decide whether a constant should be included in the dump. Excludes
-    Lean-internal names (e.g. `_aux_`, `_eqRec_*`) but keeps everything else,
-    including imported Mathlib declarations. -/
-private def includeConst (name : Name) : Bool :=
-  !name.isInternal
+/-- Core dump routine: walk every constant matching `keep`, render, write. -/
+private def runDump (path : String) (keep : Environment → Name → ConstantInfo → Bool)
+    : CommandElabM (Nat × Nat × Nat) := do
+  let env ← getEnv
+  let h ← liftM (m := IO) (IO.FS.Handle.mk path .write)
+  let buf ← liftM (m := IO) (Buf.create h)
+  liftM (m := IO) (buf.write prologue)
+  let mut declCount : Nat := 0
+  let mut tripleCount : Nat := 0
+  let mut modules : NameSet := {}
+  -- Walk map₂ (imported) first, then map₁ (current module). map₂ is a
+  -- HashMap-flavour structure with a foldM that doesn't require materialising
+  -- a List, which matters at 300k+ entries.
+  let walk (acc : Nat × Nat × NameSet) (name : Name) (info : ConstantInfo)
+      : IO (Nat × Nat × NameSet) := do
+    let (dc, tc, mods) := acc
+    if !keep env name info then return (dc, tc, mods)
+    let (s, n) := renderDecl env name info
+    buf.write s
+    let mods' := match moduleOf? env name with
+      | some m => mods.insert m
+      | none   => mods
+    return (dc + 1, tc + n, mods')
+  let acc0 : Nat × Nat × NameSet := (declCount, tripleCount, modules)
+  let acc1 ← liftM (m := IO) <| env.constants.map₂.foldlM (init := acc0) walk
+  let acc2 ← liftM (m := IO) <| env.constants.map₁.foldM (init := acc1) walk
+  let (dc, tc, mods) := acc2
+  declCount := dc; tripleCount := tc; modules := mods
+  let modTrips ← liftM (m := IO) (emitModules buf modules)
+  tripleCount := tripleCount + modTrips
+  let metaTrips ← liftM (m := IO) (emitDumpMeta buf declCount modules.size)
+  tripleCount := tripleCount + metaTrips
+  liftM (m := IO) buf.flush
+  liftM (m := IO) h.flush
+  return (declCount, modules.size, tripleCount)
 
 /-! ## Commands -/
 
 /-- `#export_rdf "path/to/out.ttl"` — dump the entire current environment to a
-    Turtle file aligned to the Meridian ontology. Streams to disk so that the
-    full Mathlib4 corpus (~300k constants) does not blow up memory. -/
+    Turtle file aligned to the Meridian ontology. Streams to disk in 64 KiB
+    chunks so the full Mathlib4 corpus (~300k constants) does not blow up
+    memory. -/
 elab "#export_rdf " path:str : command => do
-  let env ← getEnv
-  let h ← IO.FS.Handle.mk path.getString .write
-  h.putStr prologue
-  let mut declCount : Nat := 0
-  let mut tripleCount : Nat := 0
-  let mut modules : NameSet := {}
-  for (name, info) in env.constants.toList do
-    if !includeConst name then continue
-    let n ← liftIO (emitDecl h env name info)
-    tripleCount := tripleCount + n
-    declCount := declCount + 1
-    match moduleOf? env name with
-    | some m => modules := modules.insert m
-    | none   => pure ()
-  let modTrips ← liftIO (emitModules h modules)
-  tripleCount := tripleCount + modTrips
-  logInfo m!"wrote {declCount} declarations across {modules.size} modules ({tripleCount} triples) to {path.getString}"
+  let (decls, mods, trips) ← runDump path.getString (fun env n _ => includeConst env n)
+  logInfo m!"wrote {decls} declarations across {mods} modules ({trips} triples) to {path.getString}"
 
 /-- `#export_rdf_local "path/to/out.ttl"` — dump only declarations defined in
     the current module. Useful for testing and small per-project graphs. -/
 elab "#export_rdf_local " path:str : command => do
-  let env ← getEnv
-  let h ← IO.FS.Handle.mk path.getString .write
-  h.putStr prologue
-  let mut declCount : Nat := 0
-  let mut tripleCount : Nat := 0
-  let mut modules : NameSet := {}
-  for (name, info) in env.constants.toList do
-    if !includeConst name then continue
-    if env.getModuleIdxFor? name |>.isSome then continue
-    let n ← liftIO (emitDecl h env name info)
-    tripleCount := tripleCount + n
-    declCount := declCount + 1
-    match moduleOf? env name with
-    | some m => modules := modules.insert m
-    | none   => pure ()
-  let modTrips ← liftIO (emitModules h modules)
-  tripleCount := tripleCount + modTrips
-  logInfo m!"wrote {declCount} declarations across {modules.size} modules ({tripleCount} triples) to {path.getString}"
+  let keep (env : Environment) (n : Name) (_ : ConstantInfo) : Bool :=
+    includeConst env n && (env.getModuleIdxFor? n).isNone
+  let (decls, mods, trips) ← runDump path.getString keep
+  logInfo m!"wrote {decls} declarations across {mods} modules ({trips} triples) to {path.getString}"
 
 end Meridian.Core.ExportRdf
