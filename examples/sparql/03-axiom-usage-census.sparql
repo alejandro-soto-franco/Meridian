@@ -1,0 +1,12 @@
+# Census of axiom usage: which axioms are referenced, and by how many
+# declarations.
+PREFIX mer: <https://meridian.sotofranco.dev/ontology#>
+
+SELECT ?axiom (COUNT(DISTINCT ?user) AS ?users)
+WHERE {
+  ?axiom a mer:Axiom .
+  ?user mer:usesAxiom ?axiom .
+}
+GROUP BY ?axiom
+ORDER BY DESC(?users)
+LIMIT 25
