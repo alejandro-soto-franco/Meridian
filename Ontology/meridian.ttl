@@ -1,0 +1,143 @@
+@prefix mer:  <https://meridian.sotofranco.dev/ontology#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+
+#
+# Meridian Ontology
+#
+# A minimal OWL vocabulary describing Lean 4 declarations and their dependency
+# structure as a knowledge graph. Declaration IRIs use the scheme:
+#
+#   https://meridian.sotofranco.dev/lean/<module-path-with-slashes>#<decl-name>
+#
+# e.g. https://meridian.sotofranco.dev/lean/Mathlib/Topology/Basic#Continuous
+#
+# Loosely related to OMDoc (https://omdoc.org/) and MMT
+# (https://uniformal.github.io/) but intentionally smaller; alignments may be
+# added in a future revision.
+#
+
+<https://meridian.sotofranco.dev/ontology>
+  a owl:Ontology ;
+  dct:title "Meridian Ontology"@en ;
+  dct:description "Vocabulary for Lean 4 declaration knowledge graphs."@en ;
+  dct:creator "Alejandro Jose Soto Franco" ;
+  owl:versionInfo "0.1.0" .
+
+#
+# Classes
+#
+
+mer:Declaration a owl:Class ;
+  rdfs:label "Declaration"@en ;
+  rdfs:comment "Any named entity in a Lean 4 environment."@en .
+
+mer:Theorem a owl:Class ;
+  rdfs:subClassOf mer:Declaration ;
+  rdfs:label "Theorem"@en ;
+  rdfs:comment "A proven proposition (ConstantInfo.thmInfo)."@en .
+
+mer:Definition a owl:Class ;
+  rdfs:subClassOf mer:Declaration ;
+  rdfs:label "Definition"@en ;
+  rdfs:comment "A definitional declaration (ConstantInfo.defnInfo)."@en .
+
+mer:Axiom a owl:Class ;
+  rdfs:subClassOf mer:Declaration ;
+  rdfs:label "Axiom"@en ;
+  rdfs:comment "An axiomatic declaration (ConstantInfo.axiomInfo or quotInfo)."@en .
+
+mer:Inductive a owl:Class ;
+  rdfs:subClassOf mer:Declaration ;
+  rdfs:label "Inductive Type"@en ;
+  rdfs:comment "An inductive type declaration (ConstantInfo.inductInfo)."@en .
+
+mer:Constructor a owl:Class ;
+  rdfs:subClassOf mer:Declaration ;
+  rdfs:label "Constructor"@en ;
+  rdfs:comment "A constructor of an inductive type (ConstantInfo.ctorInfo)."@en .
+
+mer:Recursor a owl:Class ;
+  rdfs:subClassOf mer:Declaration ;
+  rdfs:label "Recursor"@en ;
+  rdfs:comment "A recursor of an inductive type (ConstantInfo.recInfo)."@en .
+
+mer:OpaqueDef a owl:Class ;
+  rdfs:subClassOf mer:Declaration ;
+  rdfs:label "Opaque Definition"@en ;
+  rdfs:comment "An opaque declaration (ConstantInfo.opaqueInfo)."@en .
+
+mer:Module a owl:Class ;
+  rdfs:label "Module"@en ;
+  rdfs:comment "A Lean source module (e.g. Mathlib.Topology.Basic)."@en .
+
+#
+# Object properties
+#
+
+mer:directlyDependsOn a owl:ObjectProperty ;
+  rdfs:domain mer:Declaration ;
+  rdfs:range  mer:Declaration ;
+  rdfs:label "directly depends on"@en ;
+  rdfs:comment "Subject's type or value mentions object as a Lean Expr.const."@en .
+
+mer:dependsOn a owl:ObjectProperty , owl:TransitiveProperty ;
+  rdfs:domain mer:Declaration ;
+  rdfs:range  mer:Declaration ;
+  rdfs:label "depends on"@en ;
+  rdfs:comment "Transitive closure of mer:directlyDependsOn."@en .
+
+mer:usesAxiom a owl:ObjectProperty ;
+  rdfs:domain mer:Declaration ;
+  rdfs:range  mer:Axiom ;
+  rdfs:label "uses axiom"@en ;
+  rdfs:comment "Subject directly references object and object is an Axiom."@en .
+
+mer:inModule a owl:ObjectProperty ;
+  rdfs:domain mer:Declaration ;
+  rdfs:range  mer:Module ;
+  rdfs:label "in module"@en ;
+  rdfs:comment "The Lean module in which the declaration is defined."@en .
+
+#
+# Datatype properties
+#
+
+mer:declName a owl:DatatypeProperty ;
+  rdfs:domain mer:Declaration ;
+  rdfs:range  xsd:string ;
+  rdfs:label "declaration name"@en ;
+  rdfs:comment "Fully qualified Lean name (e.g. Mathlib.Topology.Basic.Continuous)."@en .
+
+mer:inNamespace a owl:DatatypeProperty ;
+  rdfs:domain mer:Declaration ;
+  rdfs:range  xsd:string ;
+  rdfs:label "in namespace"@en ;
+  rdfs:comment "Dotted Lean namespace (the prefix of the name)."@en .
+
+mer:hasSorry a owl:DatatypeProperty ;
+  rdfs:domain mer:Declaration ;
+  rdfs:range  xsd:boolean ;
+  rdfs:label "has sorry"@en ;
+  rdfs:comment "True if the declaration's value transitively contains sorryAx."@en .
+
+mer:sorryCount a owl:DatatypeProperty ;
+  rdfs:domain mer:Declaration ;
+  rdfs:range  xsd:nonNegativeInteger ;
+  rdfs:label "sorry count"@en ;
+  rdfs:comment "Number of distinct sorryAx occurrences in the value."@en .
+
+mer:typeSize a owl:DatatypeProperty ;
+  rdfs:domain mer:Declaration ;
+  rdfs:range  xsd:nonNegativeInteger ;
+  rdfs:label "type size"@en ;
+  rdfs:comment "Structural size of the type expression (subexpression count) as a rough complexity proxy."@en .
+
+mer:moduleName a owl:DatatypeProperty ;
+  rdfs:domain mer:Module ;
+  rdfs:range  xsd:string ;
+  rdfs:label "module name"@en ;
+  rdfs:comment "Dotted Lean module name (e.g. Mathlib.Topology.Basic)."@en .

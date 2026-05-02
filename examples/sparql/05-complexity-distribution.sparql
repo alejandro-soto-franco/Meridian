@@ -1,0 +1,13 @@
+# Histogram of theorem type-size buckets. Bucketing is done by integer
+# division so the result is reproducible without server-side functions.
+PREFIX mer: <https://meridian.sotofranco.dev/ontology#>
+PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+
+SELECT ?bucket (COUNT(?d) AS ?n)
+WHERE {
+  ?d a mer:Theorem ;
+     mer:typeSize ?size .
+  BIND ((xsd:integer(?size) / 50) AS ?bucket)
+}
+GROUP BY ?bucket
+ORDER BY ?bucket

@@ -5,3 +5,4 @@ import Meridian.Core.TheoremExtract
 import Meridian.Core.Verify
 import Meridian.Core.Transform
 import Meridian.Core.Disprove
+import Meridian.Core.ExportRdf

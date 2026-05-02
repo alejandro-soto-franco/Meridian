@@ -1,0 +1,11 @@
+# All declarations that directly depend on a chosen target (parameterise the
+# IRI on the literal below). Useful for "who breaks if I change X" analyses.
+PREFIX mer: <https://meridian.sotofranco.dev/ontology#>
+
+SELECT ?d
+WHERE {
+  ?d mer:directlyDependsOn
+     <https://meridian.sotofranco.dev/lean/Init/Prelude#Eq> .
+}
+ORDER BY ?d
+LIMIT 100

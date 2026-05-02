@@ -17,4 +17,4 @@ name = "Meridian"
 [[lean_lib]]
 name = "TestCore"
 srcDir = "test"
-globs = ["Core.TestSorryExtract", "Core.TestDepGraph", "Core.TestInventory", "Core.TestTheoremExtract", "Core.TestVerify", "Core.TestTransform", "Core.TestDisprove"]
+globs = ["Core.TestSorryExtract", "Core.TestDepGraph", "Core.TestInventory", "Core.TestTheoremExtract", "Core.TestVerify", "Core.TestTransform", "Core.TestDisprove", "Core.TestExportRdf"]

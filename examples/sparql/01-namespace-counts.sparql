@@ -1,0 +1,11 @@
+# Top 25 namespaces by declaration count.
+PREFIX mer: <https://meridian.sotofranco.dev/ontology#>
+
+SELECT ?ns (COUNT(?d) AS ?n)
+WHERE {
+  ?d a mer:Declaration ;
+     mer:inNamespace ?ns .
+}
+GROUP BY ?ns
+ORDER BY DESC(?n)
+LIMIT 25
