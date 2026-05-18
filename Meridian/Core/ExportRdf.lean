@@ -287,6 +287,22 @@ private def renderDecl (b : Buf) (env : Environment) (name : Name)
     trips := trips + 1
   b.write s!"  mer:typeSize \"{tSize}\"^^xsd:nonNegativeInteger"
   trips := trips + 1
+  -- v0.2: emit mer:sourceLoc when the environment has a recorded range.
+  -- `declRangeExt.find?` is pure — same lookup `findDeclarationRangesCore?`
+  -- performs in MonadEnv contexts, but callable directly from IO since we
+  -- already hold `env`. Built-in / internal decls without ranges are
+  -- skipped (predicate is optional per v0.2 ontology).
+  let ranges? :=
+    declRangeExt.find? (level := .exported) env name <|>
+    declRangeExt.find? (level := .server)   env name
+  if let some ranges := ranges? then
+    let p := ranges.range.pos
+    let modPath := match moduleOf? env name with
+      | some m => modulePath m ++ ".lean"
+      | none   => "_local.lean"
+    let fileLineCol := s!"{modPath}:{p.line}:{p.column}"
+    b.write s!" ;\n  mer:sourceLoc \"{escapeLiteral fileLineCol}\""
+    trips := trips + 1
   match moduleOf? env name with
   | some m =>
     b.write s!" ;\n  mer:inModule {moduleIri m}"

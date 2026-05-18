@@ -87,6 +87,8 @@ private def hasSubstr (haystack needle : String) : Bool :=
     -- v0.2: `#` in decl names percent-encodes to %23 in the IRI fragment.
     -- (The fragment portion appears AFTER the module path's `#` separator.)
     "name%23with%23hash",
+    -- v0.2: at least one decl in this test file has a recorded source range.
+    "mer:sourceLoc",
     -- Classes
     "mer:Definition",
     "mer:Theorem",
