@@ -184,8 +184,10 @@ private def isDerivedHelper (n : Name) : Bool :=
   | _ => false
 
 /-- Combined inclusion filter: skip Lean-internal names and equation-compiler
-    artefacts. -/
-private def includeConst (env : Environment) (name : Name) : Bool :=
+    artefacts. Public so the `lake exe export-meridian` driver
+    (`Meridian.Drivers.ExportMain`) can share the same filter as the
+    `#export_rdf` editor commands. -/
+def includeConst (env : Environment) (name : Name) : Bool :=
   if name.isInternal then false
   else if isDerivedHelper name then false
   else
@@ -367,13 +369,17 @@ private def emitModules (b : Buf) (seen : NameSet) : IO Nat := do
     trips := trips + 2
   return trips
 
-/-- Core dump routine: walk every constant matching `keep`, render, write. -/
-private def runDump (path : String) (keep : Environment → Name → ConstantInfo → Bool)
-    : CommandElabM (Nat × Nat × Nat) := do
-  let env ← getEnv
-  let h ← liftM (m := IO) (IO.FS.Handle.mk path .write)
-  let buf ← liftM (m := IO) (Buf.create h)
-  liftM (m := IO) (buf.write prologue)
+/-- Pure-IO core dump routine: walks every constant matching `keep` over an
+    explicit `Environment` and writes Turtle to `path`. Callable from any IO
+    context (including `lake exe` `main`), so we can drive the dump from
+    `Meridian.Drivers.ExportMain` after populating an Environment via
+    `Lean.withImportModules`. The `CommandElabM`-flavoured `runDump` below is
+    a thin wrapper that supplies `← getEnv`. -/
+def runDumpIO (env : Environment) (path : String)
+    (keep : Environment → Name → ConstantInfo → Bool) : IO (Nat × Nat × Nat) := do
+  let h ← IO.FS.Handle.mk path .write
+  let buf ← Buf.create h
+  buf.write prologue
   let mut declCount : Nat := 0
   let mut tripleCount : Nat := 0
   let mut modules : NameSet := {}
@@ -390,24 +396,33 @@ private def runDump (path : String) (keep : Environment → Name → ConstantInf
       | none   => mods
     return (dc + 1, tc + n, mods')
   let acc0 : Nat × Nat × NameSet := (declCount, tripleCount, modules)
-  let acc1 ← liftM (m := IO) <| env.constants.map₂.foldlM (init := acc0) walk
-  let acc2 ← liftM (m := IO) <| env.constants.map₁.foldM (init := acc1) walk
+  let acc1 ← env.constants.map₂.foldlM (init := acc0) walk
+  let acc2 ← env.constants.map₁.foldM (init := acc1) walk
   let (dc, tc, mods) := acc2
   declCount := dc; tripleCount := tc; modules := mods
   -- v0.2: emit modules + meta + completion sentinel inside a try so the
   -- finally block still flushes if any of them panics. The sentinel is the
   -- LAST triple; consumers detect its absence as a partial-dump warning.
   try
-    let modTrips ← liftM (m := IO) (emitModules buf modules)
+    let modTrips ← emitModules buf modules
     tripleCount := tripleCount + modTrips
-    let metaTrips ← liftM (m := IO) (emitDumpMeta buf declCount modules.size)
+    let metaTrips ← emitDumpMeta buf declCount modules.size
     tripleCount := tripleCount + metaTrips
-    let sentinelTrips ← liftM (m := IO) (emitSentinel buf)
+    let sentinelTrips ← emitSentinel buf
     tripleCount := tripleCount + sentinelTrips
   finally
-    liftM (m := IO) buf.flush
-    liftM (m := IO) h.flush
+    buf.flush
+    h.flush
   return (declCount, modules.size, tripleCount)
+
+/-- Core dump routine, `CommandElabM` wrapper. Resolves the current
+    environment via `getEnv` and delegates to `runDumpIO`, so editor commands
+    (`#export_rdf`, `#export_rdf_local`) and the Lake exe driver share the
+    same implementation. -/
+private def runDump (path : String) (keep : Environment → Name → ConstantInfo → Bool)
+    : CommandElabM (Nat × Nat × Nat) := do
+  let env ← getEnv
+  liftM (m := IO) (runDumpIO env path keep)
 
 /-! ## Commands -/
 

@@ -14,6 +14,18 @@ rev = "698d2b68b870f1712040ab0c233d34372d4b56df"
 [[lean_lib]]
 name = "Meridian"
 
+# `lake exe export-meridian <out.ttl> [Module1 Module2 ...]` produces a v0.2
+# Meridian Turtle dump of the imported environment. Stratum's `cite
+# lean-sync` driver invokes this against any Meridian-importing Lean project
+# to feed `stratum-meridian-bridge`. The exe's `main` lives in
+# `Meridian/Drivers/ExportMain.lean`; `supportInterpreter = true` is required
+# because the driver runs Lean's environment loader at runtime
+# (mirrors `importGraph`'s `lake exe graph` setup).
+[[lean_exe]]
+name = "export-meridian"
+root = "Meridian.Drivers.ExportMain"
+supportInterpreter = true
+
 [[lean_lib]]
 name = "TestCore"
 srcDir = "test"
