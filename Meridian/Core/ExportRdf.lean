@@ -29,34 +29,29 @@ namespace Meridian.Core.ExportRdf
 open Lean Elab Command Meta
 open Meridian.Core.SorryExtract
 
-/-! ## Buffered writer
+/-! ## Writer
 
-`IO.FS.Handle.putStr` issues one syscall per call. Emitting ~300k declarations
-with ~50 short writes each is millions of syscalls, which dominates wall
-time. `Buf` accumulates into an `IO.Ref String` and flushes at a tunable
-byte threshold (~64 KiB), reducing syscall count by ~3 orders of magnitude. -/
+We write directly to `IO.FS.Handle` rather than maintaining an in-Lean
+buffer. Lean's `Handle.putStr` is backed by libc `fwrite`, which already
+block-buffers at 4 KiB. Adding an in-Lean buffer on top of that requires
+either O(N²) string concatenation (the trap that made the first dump
+attempt take ~21 hours on Mathlib) or careful pre-sized ByteArray
+arithmetic — both unnecessary when libc handles the batching for us.
+
+The thin `Buf` wrapper is kept so render code stays handle-agnostic and so
+we can later swap in a smarter writer (e.g. async, gzip-on-the-fly). -/
 
 private structure Buf where
-  ref       : IO.Ref String
-  handle    : IO.FS.Handle
-  threshold : Nat
+  handle : IO.FS.Handle
 
-private def Buf.create (h : IO.FS.Handle) (threshold : Nat := 65536) : IO Buf := do
-  let r ← IO.mkRef ""
-  return { ref := r, handle := h, threshold := threshold }
+private def Buf.create (h : IO.FS.Handle) : IO Buf := do
+  return { handle := h }
 
-private def Buf.write (b : Buf) (s : String) : IO Unit := do
-  b.ref.modify (· ++ s)
-  let cur ← b.ref.get
-  if cur.length ≥ b.threshold then
-    b.handle.putStr cur
-    b.ref.set ""
+private def Buf.write (b : Buf) (s : String) : IO Unit :=
+  b.handle.putStr s
 
-private def Buf.flush (b : Buf) : IO Unit := do
-  let cur ← b.ref.get
-  if !cur.isEmpty then
-    b.handle.putStr cur
-    b.ref.set ""
+private def Buf.flush (b : Buf) : IO Unit :=
+  b.handle.flush
 
 /-! ## IRI construction -/
 
@@ -230,11 +225,13 @@ private def emitDumpMeta (b : Buf) (declCount moduleCount : Nat) : IO Nat := do
   b.write s!"  mer:moduleCount \"{moduleCount}\"^^xsd:nonNegativeInteger .\n\n"
   return 4
 
-/-- Build the full Turtle block for a single declaration as a single string.
-    Returns the string and the triple count. Single-string-then-write keeps
-    syscalls per declaration to one buffered append. -/
-private def renderDecl (env : Environment) (name : Name) (info : ConstantInfo)
-    : String × Nat := Id.run do
+/-- Write the Turtle block for a single declaration directly to the buffer.
+    Returns the triple count. Writing piece-by-piece avoids the O(K²)
+    string-build that arises from `s := s ++ ...` over K dep IRIs (Lean's
+    `String ++` is O(|s|), so a per-decl single-string build is quadratic
+    in the dep count and dominates wallclock at Mathlib scale). -/
+private def renderDecl (b : Buf) (env : Environment) (name : Name)
+    (info : ConstantInfo) : IO Nat := do
   let subj := declIri env name
   let cls  := classOf info
   let ns   := nameToDotted name.getPrefix
@@ -260,47 +257,41 @@ private def renderDecl (env : Environment) (name : Name) (info : ConstantInfo)
     | some ci => isAxiomLike ci
     | none    => false
 
-  let mut s := s!"{subj} a {cls} ;\n"
-  let mut trips : Nat := 1
-  s := s ++ s!"  mer:declName \"{escapeLiteral fullName}\" ;\n"
-  trips := trips + 1
+  let mut trips : Nat := 0
+  b.write s!"{subj} a {cls} ;\n"; trips := trips + 1
+  b.write s!"  mer:declName \"{escapeLiteral fullName}\" ;\n"; trips := trips + 1
   if !ns.isEmpty then
-    s := s ++ s!"  mer:inNamespace \"{escapeLiteral ns}\" ;\n"
-    trips := trips + 1
-  s := s ++ s!"  mer:hasSorry \"{if hasS then "true" else "false"}\"^^xsd:boolean ;\n"
+    b.write s!"  mer:inNamespace \"{escapeLiteral ns}\" ;\n"; trips := trips + 1
+  b.write s!"  mer:hasSorry \"{if hasS then "true" else "false"}\"^^xsd:boolean ;\n"
   trips := trips + 1
   if sorryCount > 0 then
-    s := s ++ s!"  mer:sorryCount \"{sorryCount}\"^^xsd:nonNegativeInteger ;\n"
+    b.write s!"  mer:sorryCount \"{sorryCount}\"^^xsd:nonNegativeInteger ;\n"
     trips := trips + 1
-  s := s ++ s!"  mer:typeSize \"{tSize}\"^^xsd:nonNegativeInteger"
+  b.write s!"  mer:typeSize \"{tSize}\"^^xsd:nonNegativeInteger"
   trips := trips + 1
   match moduleOf? env name with
   | some m =>
-    s := s ++ s!" ;\n  mer:inModule {moduleIri m}"
+    b.write s!" ;\n  mer:inModule {moduleIri m}"
     trips := trips + 1
   | none => pure ()
   if !directDeps.isEmpty then
-    s := s ++ " ;\n  mer:directlyDependsOn "
+    b.write " ;\n  mer:directlyDependsOn "
     let mut first := true
     for d in directDeps do
-      if first then
-        first := false
-        s := s ++ declIri env d
-      else
-        s := s ++ " , " ++ declIri env d
+      if first then first := false
+      else b.write " , "
+      b.write (declIri env d)
       trips := trips + 1
   if !axiomDeps.isEmpty then
-    s := s ++ " ;\n  mer:usesAxiom "
+    b.write " ;\n  mer:usesAxiom "
     let mut first := true
     for d in axiomDeps do
-      if first then
-        first := false
-        s := s ++ declIri env d
-      else
-        s := s ++ " , " ++ declIri env d
+      if first then first := false
+      else b.write " , "
+      b.write (declIri env d)
       trips := trips + 1
-  s := s ++ " .\n"
-  return (s, trips)
+  b.write " .\n"
+  return trips
 
 /-- Emit module-name triples for every distinct module referenced in `seen`. -/
 private def emitModules (b : Buf) (seen : NameSet) : IO Nat := do
@@ -328,8 +319,7 @@ private def runDump (path : String) (keep : Environment → Name → ConstantInf
       : IO (Nat × Nat × NameSet) := do
     let (dc, tc, mods) := acc
     if !keep env name info then return (dc, tc, mods)
-    let (s, n) := renderDecl env name info
-    buf.write s
+    let n ← renderDecl buf env name info
     let mods' := match moduleOf? env name with
       | some m => mods.insert m
       | none   => mods
@@ -350,9 +340,9 @@ private def runDump (path : String) (keep : Environment → Name → ConstantInf
 /-! ## Commands -/
 
 /-- `#export_rdf "path/to/out.ttl"` — dump the entire current environment to a
-    Turtle file aligned to the Meridian ontology. Streams to disk in 64 KiB
-    chunks so the full Mathlib4 corpus (~300k constants) does not blow up
-    memory. -/
+    Turtle file aligned to the Meridian ontology. Writes are passed straight
+    through to libc's block-buffered fwrite, so memory stays flat regardless
+    of corpus size. -/
 elab "#export_rdf " path:str : command => do
   let (decls, mods, trips) ← runDump path.getString (fun env n _ => includeConst env n)
   logInfo m!"wrote {decls} declarations across {mods} modules ({trips} triples) to {path.getString}"
