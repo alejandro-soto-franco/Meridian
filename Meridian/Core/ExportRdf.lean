@@ -232,8 +232,10 @@ private def prologue : String :=
   "@prefix mer:  <https://meridian.sotofranco.dev/ontology#> .\n" ++
   "@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .\n" ++
   "@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .\n" ++
+  "@prefix owl:  <http://www.w3.org/2002/07/owl#> .\n" ++
   "@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .\n" ++
-  "@prefix dct:  <http://purl.org/dc/terms/> .\n\n"
+  "@prefix dct:  <http://purl.org/dc/terms/> .\n\n" ++
+  "<https://meridian.sotofranco.dev/ontology> owl:versionInfo \"0.2.0\" .\n\n"
 
 /-- Emit a graph-level metadata block describing the dump itself. -/
 private def emitDumpMeta (b : Buf) (declCount moduleCount : Nat) : IO Nat := do
@@ -242,6 +244,12 @@ private def emitDumpMeta (b : Buf) (declCount moduleCount : Nat) : IO Nat := do
   b.write s!"  mer:declCount \"{declCount}\"^^xsd:nonNegativeInteger ;\n"
   b.write s!"  mer:moduleCount \"{moduleCount}\"^^xsd:nonNegativeInteger .\n\n"
   return 4
+
+/-- Emit the v0.2 completion sentinel as the very last triple. Consumers
+    treat its absence as proof of a truncated/crashed dump. -/
+private def emitSentinel (b : Buf) : IO Nat := do
+  b.write "<urn:meridian:dump> mer:complete \"true\"^^xsd:boolean .\n"
+  return 1
 
 /-- Write the Turtle block for a single declaration directly to the buffer.
     Returns the triple count. Writing piece-by-piece avoids the O(K²)
@@ -386,12 +394,19 @@ private def runDump (path : String) (keep : Environment → Name → ConstantInf
   let acc2 ← liftM (m := IO) <| env.constants.map₁.foldM (init := acc1) walk
   let (dc, tc, mods) := acc2
   declCount := dc; tripleCount := tc; modules := mods
-  let modTrips ← liftM (m := IO) (emitModules buf modules)
-  tripleCount := tripleCount + modTrips
-  let metaTrips ← liftM (m := IO) (emitDumpMeta buf declCount modules.size)
-  tripleCount := tripleCount + metaTrips
-  liftM (m := IO) buf.flush
-  liftM (m := IO) h.flush
+  -- v0.2: emit modules + meta + completion sentinel inside a try so the
+  -- finally block still flushes if any of them panics. The sentinel is the
+  -- LAST triple; consumers detect its absence as a partial-dump warning.
+  try
+    let modTrips ← liftM (m := IO) (emitModules buf modules)
+    tripleCount := tripleCount + modTrips
+    let metaTrips ← liftM (m := IO) (emitDumpMeta buf declCount modules.size)
+    tripleCount := tripleCount + metaTrips
+    let sentinelTrips ← liftM (m := IO) (emitSentinel buf)
+    tripleCount := tripleCount + sentinelTrips
+  finally
+    liftM (m := IO) buf.flush
+    liftM (m := IO) h.flush
   return (declCount, modules.size, tripleCount)
 
 /-! ## Commands -/

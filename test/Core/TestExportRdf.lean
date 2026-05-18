@@ -114,7 +114,10 @@ private def hasSubstr (haystack needle : String) : Bool :=
     "a mer:Dump",
     "dct:source \"Lean ",
     "mer:declCount",
-    "mer:moduleCount"
+    "mer:moduleCount",
+    "owl:versionInfo \"0.2.0\"",
+    "mer:complete \"true\"",
+    "<urn:meridian:dump>",
   ]
   for needle in mustContain do
     if !hasSubstr txt needle then
