@@ -31,22 +31,22 @@ mer:sourceLoc a owl:DatatypeProperty ;
   rdfs:domain mer:Declaration ;
   rdfs:range  xsd:string ;
   rdfs:label "source location"@en ;
-  rdfs:comment "Module-relative file:line:col where the decl is defined. Line is 1-based, col is 0-based (matches Lean's internal convention). Absent if unavailable." @en .
+  rdfs:comment "Module-relative file:line:col where the decl is defined. Line is 1-based, col is 0-based (matches Lean's internal convention). Absent if unavailable."@en .
 
 mer:docstring a owl:DatatypeProperty ;
   rdfs:domain mer:Declaration ;
   rdfs:range  xsd:string ;
   rdfs:label "docstring"@en ;
-  rdfs:comment "Body of the `/-- ... -/` comment attached to the decl, raw, no markdown normalisation. Absent if no docstring." @en .
+  rdfs:comment "Body of the `/-- ... -/` comment attached to the decl, raw, no markdown normalisation. Absent if no docstring."@en .
 
 mer:typeSignature a owl:DatatypeProperty ;
   rdfs:domain mer:Declaration ;
   rdfs:range  xsd:string ;
   rdfs:label "type signature"@en ;
-  rdfs:comment "Pretty-printed Lean type expression. Absent if unavailable or too large to render." @en .
+  rdfs:comment "Pretty-printed Lean type expression. Absent if unavailable or too large to render."@en .
 
 mer:complete a owl:DatatypeProperty ;
   rdfs:domain mer:Dump ;
   rdfs:range  xsd:boolean ;
   rdfs:label "complete"@en ;
-  rdfs:comment "Presence of this triple as the last in the file proves the writer finished cleanly. Consumers detecting its absence treat the dump as partial." @en .
+  rdfs:comment "Presence of this triple as the last in the file proves the writer finished cleanly. Consumers detecting its absence treat the dump as partial."@en .
