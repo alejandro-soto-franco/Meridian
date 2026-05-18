@@ -55,14 +55,30 @@ private def Buf.flush (b : Buf) : IO Unit :=
 
 /-! ## IRI construction -/
 
-/-- Percent-encode bytes outside the conservative URL-safe set. We keep
-    `A-Z a-z 0-9 - _ . ~ /` and `#` (since `#` is the fragment separator we
-    deliberately emit). Everything else becomes `%HH`. Handles arbitrary
-    Unicode codepoints (French quotes, mathematical operators, etc.) by
-    encoding their UTF-8 byte sequence. -/
-private def percentEncode (s : String) : String :=
+/-- Percent-encode bytes outside the conservative URL-safe set, keeping `#`
+    in the safe set (suitable for path segments where `#` is the IRI fragment
+    separator). Used for the module path portion of a decl IRI. -/
+private def percentEncodeKeepHash (s : String) : String :=
   let safe (c : Char) : Bool :=
     c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '~' || c == '/' || c == '#'
+  let hexDigit (n : Nat) : Char :=
+    if n < 10 then Char.ofNat (n + '0'.toNat)
+    else Char.ofNat (n - 10 + 'A'.toNat)
+  let toHex (n : Nat) : String :=
+    String.singleton (hexDigit (n / 16)) ++ String.singleton (hexDigit (n % 16))
+  s.foldl (init := "") fun acc c =>
+    if safe c then acc.push c
+    else
+      let bytes := (String.singleton c).toUTF8
+      bytes.foldl (init := acc) fun a b => a ++ "%" ++ toHex b.toNat
+
+/-- Percent-encode bytes for the fragment portion of an IRI. Unlike
+    `percentEncodeKeepHash`, `#` is NOT in the safe set — a Lean name
+    containing `#` (e.g. `command#redundant_imports`) encodes to `%23` so
+    the resulting IRI has exactly one `#` (the module-vs-name boundary). -/
+private def percentEncodeFragment (s : String) : String :=
+  let safe (c : Char) : Bool :=
+    c.isAlphanum || c == '-' || c == '_' || c == '.' || c == '~'
   let hexDigit (n : Nat) : Char :=
     if n < 10 then Char.ofNat (n + '0'.toNat)
     else Char.ofNat (n - 10 + 'A'.toNat)
@@ -94,19 +110,21 @@ private def moduleOf? (env : Environment) (declName : Name) : Option Name :=
     let mods := env.allImportedModuleNames
     if h : idx.toNat < mods.size then some mods[idx.toNat] else none
 
-/-- Build the IRI of a declaration. If the module is unknown, we synthesise a
-    `_local` module path so the IRI remains globally unique within the dump. -/
+/-- Build the IRI of a declaration. v0.2: path segment keeps `#` (none in
+    practice; `/` is the only special char), fragment percent-encodes `#`
+    so Lean names like `command#redundant_imports` produce one valid
+    `#`-separated IRI rather than the malformed double-`#` form. -/
 private def declIri (env : Environment) (declName : Name) : String :=
   let modSlug := match moduleOf? env declName with
     | some m => modulePath m
     | none   => "_local"
-  let path := percentEncode modSlug
-  let frag := percentEncode (nameToDotted declName)
+  let path := percentEncodeKeepHash modSlug
+  let frag := percentEncodeFragment (nameToDotted declName)
   s!"<https://meridian.sotofranco.dev/lean/{path}#{frag}>"
 
 /-- Build the IRI of a module. -/
 private def moduleIri (modName : Name) : String :=
-  let slug := percentEncode (modulePath modName)
+  let slug := percentEncodeKeepHash (modulePath modName)
   s!"<https://meridian.sotofranco.dev/lean/{slug}>"
 
 /-- IRI of the synthetic dump-metadata subject. -/

@@ -51,6 +51,10 @@ structure Pair (α β : Type) where
 -- A declaration whose name forces percent-encoding via French quotes.
 def «hard name» : Nat := 0
 
+-- v0.2 IRI percent-encoding stress test: a Lean name containing `#`
+-- (rare in practice but legal in Lean 4 internal names).
+def «name#with#hash» : Nat := 0
+
 end MeridianTest.ExportRdf
 
 private def testOutPath : String := "/tmp/meridian-test-export.ttl"
@@ -80,6 +84,9 @@ private def hasSubstr (haystack needle : String) : Bool :=
     -- The French-quote brackets are syntactic; Lean's name representation is
     -- `hard name` (with a space). The space must be percent-encoded in the IRI.
     "MeridianTest.ExportRdf.hard%20name",
+    -- v0.2: `#` in decl names percent-encodes to %23 in the IRI fragment.
+    -- (The fragment portion appears AFTER the module path's `#` separator.)
+    "name%23with%23hash",
     -- Classes
     "mer:Definition",
     "mer:Theorem",
@@ -102,4 +109,12 @@ private def hasSubstr (haystack needle : String) : Bool :=
   for needle in mustContain do
     if !hasSubstr txt needle then
       throw <| IO.userError s!"export missing expected substring: {needle}"
+  let mustNotContain : List String := [
+    -- A bare unencoded `#with#hash` in the fragment would produce three
+    -- `#`s in the IRI, which is invalid RFC 3987.
+    "#name#with#hash",
+  ]
+  for needle in mustNotContain do
+    if hasSubstr txt needle then
+      throw <| IO.userError s!"v0.2 assert: dump unexpectedly contains {needle}"
   IO.println s!"export OK ({txt.length} bytes, {mustContain.length} substring assertions passed)"
