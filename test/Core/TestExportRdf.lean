@@ -95,6 +95,8 @@ private def hasSubstr (haystack needle : String) : Bool :=
     -- v0.2: docstring round-trip via Lean.docStringExt.
     "A theorem with a docstring that should round-trip",
     "mer:docstring",
+    -- v0.2: type signature emitted via pure `Expr.dbgToString`.
+    "mer:typeSignature",
     -- Classes
     "mer:Definition",
     "mer:Theorem",

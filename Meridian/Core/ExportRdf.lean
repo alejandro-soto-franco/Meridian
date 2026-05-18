@@ -312,6 +312,20 @@ private def renderDecl (b : Buf) (env : Environment) (name : Name)
   if let some doc := docStringExt.find? (level := .server) env name then
     b.write s!" ;\n  mer:docstring \"{escapeLiteral doc}\""
     trips := trips + 1
+  -- v0.2: emit mer:typeSignature with a stringified Lean type expression.
+  -- Uses `Expr.dbgToString` (the `ToString Expr` instance), which is pure
+  -- on `Expr` — no MetaM threading needed, keeping `renderDecl` in IO with
+  -- the same monad discipline as the sourceLoc / docstring blocks above.
+  -- Output is the debug/desugared form (e.g. `GT.gt.{0} Nat instLTNat …`
+  -- rather than `_ > _`); `Lean.PrettyPrinter.ppExpr` would yield the
+  -- prettier surface form but requires MetaM and would force a structural
+  -- rewrite of the walk loop. Capped at 8192 chars to prevent Mathlib's
+  -- deepest universe-polymorphic types from blowing up dump size;
+  -- consumers fall back to mer:typeSize for size-bound queries.
+  let typeSig := Expr.dbgToString info.type
+  if typeSig.length > 0 && typeSig.length ≤ 8192 then
+    b.write s!" ;\n  mer:typeSignature \"{escapeLiteral typeSig}\""
+    trips := trips + 1
   match moduleOf? env name with
   | some m =>
     b.write s!" ;\n  mer:inModule {moduleIri m}"
