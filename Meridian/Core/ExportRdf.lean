@@ -355,4 +355,91 @@ elab "#export_rdf_local " path:str : command => do
   let (decls, mods, trips) ← runDump path.getString keep
   logInfo m!"wrote {decls} declarations across {mods} modules ({trips} triples) to {path.getString}"
 
+/-! ## Profiling
+
+`#profile_deps "out/profile.csv"` walks the env once, timing the per-decl
+hot path used by `#export_rdf` (`collectDepsExt` ×2 + `containsSorry` +
+axiom-check filter). Rows are written for every declaration whose total
+hot-path cost exceeds 50 ms. A top-20 summary is logged. Used to
+diagnose pathological declarations whose Expr DAG triggers exponential
+walks under naive recursion. -/
+
+private def slowMsDefault : Nat := 50
+
+/-- Single-decl hot-path measurement, in nanoseconds. -/
+private structure DeclProfile where
+  name        : Name
+  typeSize    : Nat
+  valueSize   : Nat
+  typeDepsNs  : Nat
+  valDepsNs   : Nat
+  sorryNs     : Nat
+  axiomNs     : Nat
+  depCount    : Nat
+  deriving Inhabited
+
+private def DeclProfile.totalNs (p : DeclProfile) : Nat :=
+  p.typeDepsNs + p.valDepsNs + p.sorryNs + p.axiomNs
+
+private def fmtMs (ns : Nat) : String :=
+  let ms := ns / 1000000
+  let frac := (ns % 1000000) / 100000
+  s!"{ms}.{frac}"
+
+elab "#profile_deps " path:str : command => do
+  let env ← getEnv
+  let h ← liftM (m := IO) (IO.FS.Handle.mk path.getString .write)
+  liftM (m := IO) <| h.putStr "name,type_size,value_size,type_deps_us,val_deps_us,sorry_us,axiom_us,dep_count,total_us\n"
+  let slowNs := slowMsDefault * 1000000
+  let walk (acc : Nat × Nat × Array DeclProfile) (name : Name) (info : ConstantInfo)
+      : IO (Nat × Nat × Array DeclProfile) := do
+    let (scanned, slowCount, top) := acc
+    if !includeConst env name then return (scanned, slowCount, top)
+    let tSize := exprSize info.type
+    let vSize := match info.value? with | some v => exprSize v | none => 0
+    let t0 ← IO.monoNanosNow
+    let typeDeps := collectDepsExt info.type
+    let t1 ← IO.monoNanosNow
+    let valDeps := match info.value? with
+      | some v => collectDepsExt v
+      | none   => {}
+    let t2 ← IO.monoNanosNow
+    let _ := match info.value? with
+      | some v => containsSorry v
+      | none   => false
+    let t3 ← IO.monoNanosNow
+    let directDeps : List Name :=
+      (typeDeps.merge valDeps).toList |>.filter (fun n => !n.isInternal && n != name)
+    let _ := directDeps.filter fun n =>
+      match env.find? n with
+      | some ci => isAxiomLike ci
+      | none    => false
+    let t4 ← IO.monoNanosNow
+    let p : DeclProfile :=
+      { name := name, typeSize := tSize, valueSize := vSize
+      , typeDepsNs := t1 - t0, valDepsNs := t2 - t1
+      , sorryNs := t3 - t2, axiomNs := t4 - t3
+      , depCount := directDeps.length }
+    let total := p.totalNs
+    let scanned' := scanned + 1
+    let mut slowCount' := slowCount
+    let mut top' := top
+    if total ≥ slowNs then
+      slowCount' := slowCount + 1
+      h.putStr s!"{name},{p.typeSize},{p.valueSize},{p.typeDepsNs/1000},{p.valDepsNs/1000},{p.sorryNs/1000},{p.axiomNs/1000},{p.depCount},{total/1000}\n"
+      top' := top.push p
+    return (scanned', slowCount', top')
+  let acc0 : Nat × Nat × Array DeclProfile := (0, 0, #[])
+  let acc1 ← liftM (m := IO) <| env.constants.map₂.foldlM (init := acc0) walk
+  let (scanned, slowCount, top) ← liftM (m := IO) <| env.constants.map₁.foldM (init := acc1) walk
+  liftM (m := IO) h.flush
+  -- Sort top profiles by total time (descending) and report top 20.
+  let sorted := top.toList.mergeSort (fun a b => a.totalNs > b.totalNs)
+  let topK := sorted.take 20
+  let mut summary := s!"profile: scanned {scanned} decls, {slowCount} slow (≥{slowMsDefault}ms), CSV at {path.getString}\n"
+  summary := summary ++ "top 20 by total hot-path time:\n"
+  for (i, p) in topK.zip (List.range topK.length) do
+    summary := summary ++ s!"  {p+1}. [{fmtMs i.totalNs}ms] {i.name}  type={i.typeSize} val={i.valueSize} deps={i.depCount} (typeDeps {fmtMs i.typeDepsNs}ms, valDeps {fmtMs i.valDepsNs}ms, sorry {fmtMs i.sorryNs}ms, axiom {fmtMs i.axiomNs}ms)\n"
+  logInfo summary
+
 end Meridian.Core.ExportRdf
