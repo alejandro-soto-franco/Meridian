@@ -303,6 +303,15 @@ private def renderDecl (b : Buf) (env : Environment) (name : Name)
     let fileLineCol := s!"{modPath}:{p.line}:{p.column}"
     b.write s!" ;\n  mer:sourceLoc \"{escapeLiteral fileLineCol}\""
     trips := trips + 1
+  -- v0.2: emit mer:docstring when the environment carries one for this decl.
+  -- `docStringExt` is the env extension that registers raw `/-- ... -/`
+  -- comment bodies; absent for built-ins and for decls written without
+  -- docstrings. Pure lookup on the Environment, mirroring P1.2's
+  -- `declRangeExt.find?` pattern — no monadic enrichment, no alias
+  -- resolution, no markdown normalisation (raw body per v0.2 spec).
+  if let some doc := docStringExt.find? (level := .server) env name then
+    b.write s!" ;\n  mer:docstring \"{escapeLiteral doc}\""
+    trips := trips + 1
   match moduleOf? env name with
   | some m =>
     b.write s!" ;\n  mer:inModule {moduleIri m}"

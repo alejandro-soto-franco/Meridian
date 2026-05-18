@@ -55,6 +55,9 @@ def «hard name» : Nat := 0
 -- (rare in practice but legal in Lean 4 internal names).
 def «name#with#hash» : Nat := 0
 
+/-- A theorem with a docstring that should round-trip through the v0.2 dump. -/
+theorem documentedTheorem : 1 + 1 = 2 := by decide
+
 end MeridianTest.ExportRdf
 
 private def testOutPath : String := "/tmp/meridian-test-export.ttl"
@@ -89,6 +92,9 @@ private def hasSubstr (haystack needle : String) : Bool :=
     "name%23with%23hash",
     -- v0.2: at least one decl in this test file has a recorded source range.
     "mer:sourceLoc",
+    -- v0.2: docstring round-trip via Lean.docStringExt.
+    "A theorem with a docstring that should round-trip",
+    "mer:docstring",
     -- Classes
     "mer:Definition",
     "mer:Theorem",
