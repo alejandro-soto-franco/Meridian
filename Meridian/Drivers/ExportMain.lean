@@ -20,9 +20,11 @@ requested module list via `Lean.withImportModules` (the same primitive
 * `<out.ttl>` is the destination Turtle path (required).
 * The optional module-name arguments are the Lean modules to import. They
   must already be built (`lake build` against the host project). When no
-  modules are supplied the driver defaults to importing `Meridian`, which is
-  the Lake target's own library and gives Stratum's `cite lean-sync` a
-  zero-config sanity check against this repo.
+  modules are supplied the driver discovers the host project's own built
+  modules under `.lake/build/lib/lean` and imports those, so `stratum cite
+  lean-sync` (which passes no module args) exports the project's full import
+  closure rather than Meridian's. If no built modules are found it falls back
+  to importing `Meridian`, a zero-config sanity check against this repo.
 
 The dump format and ontology are defined by `Meridian/Ontology/meridian.ttl`
 (v0.2). Stratum's bridge consumer (`stratum-meridian-bridge`) ingests the
@@ -52,6 +54,34 @@ private def parseModuleName (s : String) : Except String Name := do
     throw s!"malformed module name: {s}"
   return parts.foldl (init := Name.anonymous) fun acc part => Name.mkStr acc part
 
+/-- Discover the host project's own built modules by walking
+    `.lake/build/lib/lean` (the project's library output; its dependencies build
+    under `.lake/packages/<dep>/.lake/...`, which is not reachable from here).
+    Each `A/B/C.olean` maps to the module name `A.B.C`. Returns `#[]` when the
+    directory is absent (e.g. an unbuilt project), so the caller can fall back.
+
+    Lake runs `lake exe export-meridian` with the project directory as the
+    process cwd, so the relative `.lake` path resolves against the host project,
+    not against Meridian. -/
+private def discoverProjectModules : IO (Array Name) := do
+  let root : System.FilePath := "." / ".lake" / "build" / "lib" / "lean"
+  if !(← root.isDir) then
+    return #[]
+  -- `walkDir` builds every entry as `root / …`, so the entry's path components
+  -- share `root`'s prefix exactly; dropping that many components yields the
+  -- module path regardless of separator normalisation.
+  let rootDepth := root.components.length
+  let mut acc : Array Name := #[]
+  for e in (← root.walkDir) do
+    if e.extension == some "olean" then
+      -- Drop the `.olean` extension on the path itself, then read off the
+      -- module components below the build root.
+      let comps := (e.withExtension "").components.drop rootDepth
+      let n := comps.foldl (init := Name.anonymous) fun acc c => Name.mkStr acc c
+      if n != Name.anonymous then
+        acc := acc.push n
+  return acc
+
 /-- Print usage to stderr and return exit code 2. -/
 private def usage : IO UInt32 := do
   IO.eprintln "usage: lake exe export-meridian <out.ttl> [Module1 Module2 ...]"
@@ -71,7 +101,19 @@ unsafe def main (args : List String) : IO UInt32 := do
     | out :: rest => pure (out, rest)
   let moduleNames : Array Name ← do
     if moduleArgs.isEmpty then
-      pure #[`Meridian]
+      -- No explicit module list: export the HOST PROJECT's own environment by
+      -- discovering its built modules under `.lake/build/lib/lean`. This is
+      -- what `stratum cite lean-sync` relies on (it passes no module args), so
+      -- the synced store reflects the project's full import closure rather than
+      -- Meridian's. Fall back to `Meridian` only when nothing is found, which
+      -- preserves the zero-config sanity check against this repo itself.
+      let discovered ← discoverProjectModules
+      if discovered.isEmpty then
+        IO.eprintln "export-meridian: no built modules under .lake/build/lib/lean; \
+          defaulting to `Meridian`"
+        pure #[`Meridian]
+      else
+        pure discovered
     else
       let mut acc : Array Name := #[]
       for s in moduleArgs do
