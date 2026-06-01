@@ -110,6 +110,19 @@ private def moduleOf? (env : Environment) (declName : Name) : Option Name :=
     let mods := env.allImportedModuleNames
     if h : idx.toNat < mods.size then some mods[idx.toNat] else none
 
+/-- True when declaration `n`'s defining module has one of `scope`'s names as its
+    root component, or when `scope` is empty (no restriction). Drives
+    `export-meridian --scope <Prefix>`: keep only a project's own declarations
+    (e.g. `EllipticDirichlet`, `DeGiorgi`) while still emitting their dependency
+    edges, whose out-of-scope (Mathlib) targets resolve against the shared Mathlib
+    graph in the unified store. A declaration with no defining module (a local of
+    the current module) is out of scope under a non-empty `scope`. -/
+def moduleInScope (env : Environment) (scope : Array Name) (n : Name) : Bool :=
+  scope.isEmpty ||
+    match moduleOf? env n with
+    | some m => scope.contains m.getRoot
+    | none   => false
+
 /-- Build the IRI of a declaration. v0.2: path segment keeps `#` (none in
     practice; `/` is the only special char), fragment percent-encodes `#`
     so Lean names like `command#redundant_imports` produce one valid

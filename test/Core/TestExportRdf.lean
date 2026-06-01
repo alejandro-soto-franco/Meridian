@@ -131,3 +131,22 @@ private def hasSubstr (haystack needle : String) : Bool :=
     if hasSubstr txt needle then
       throw <| IO.userError s!"v0.2 assert: dump unexpectedly contains {needle}"
   IO.println s!"export OK ({txt.length} bytes, {mustContain.length} substring assertions passed)"
+
+-- `--scope` keep-filter (drives `export-meridian --scope <Prefix>`): a declaration
+-- is in scope iff its defining module's root component is listed, and an empty
+-- scope imposes no restriction. This gates which decls get a record; dependency
+-- edges they reference are unaffected, so a scoped project dump still points at
+-- the shared Mathlib graph.
+open Lean in
+run_cmd do
+  let env ← getEnv
+  let some idx := env.getModuleIdxFor? ``Nat.zero
+    | throwError "Nat.zero should be an imported declaration"
+  let root := (env.allImportedModuleNames[idx.toNat]!).getRoot
+  unless moduleInScope env #[root] ``Nat.zero do
+    throwError s!"Nat.zero should be in scope #[{root}]"
+  if moduleInScope env #[`NoSuchRoot_XYZ] ``Nat.zero then
+    throwError "Nat.zero should be out of scope under an unrelated root"
+  unless moduleInScope env #[] ``Nat.zero do
+    throwError "an empty scope should include every declaration"
+  IO.println "moduleInScope scope-filter: OK"

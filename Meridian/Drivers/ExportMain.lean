@@ -54,6 +54,22 @@ private def parseModuleName (s : String) : Except String Name := do
     throw s!"malformed module name: {s}"
   return parts.foldl (init := Name.anonymous) fun acc part => Name.mkStr acc part
 
+/-- Pull `--scope <Prefix>` pairs (repeatable) out of the argument list, returning
+    the remaining positional args (out path + optional module list) and the parsed
+    scope prefixes. A scope restricts the dump to declarations whose defining
+    module has one of these names as its root component, while still emitting their
+    dependency edges; an empty scope means no restriction (today's behaviour). -/
+private def partitionScope : List String → Except String (List String × Array Name)
+  | [] => .ok ([], #[])
+  | "--scope" :: p :: rest => do
+      let n ← parseModuleName p
+      let (pos, scope) ← partitionScope rest
+      .ok (pos, #[n] ++ scope)
+  | ["--scope"] => .error "--scope requires a module-name argument"
+  | a :: rest => do
+      let (pos, scope) ← partitionScope rest
+      .ok (a :: pos, scope)
+
 /-- Discover the host project's own built modules by walking
     `.lake/build/lib/lean` (the project's library output; its dependencies build
     under `.lake/packages/<dep>/.lake/...`, which is not reachable from here).
@@ -96,7 +112,12 @@ open Meridian.Drivers.ExportMain
 
 /-- `lake exe export-meridian` entry point. -/
 unsafe def main (args : List String) : IO UInt32 := do
-  let (outPath, moduleArgs) ← match args with
+  let (positional, scopeNames) ← match partitionScope args with
+    | .ok r => pure r
+    | .error msg => do
+      IO.eprintln s!"export-meridian: {msg}"
+      return 2
+  let (outPath, moduleArgs) ← match positional with
     | [] => return ← usage
     | out :: rest => pure (out, rest)
   let moduleNames : Array Name ← do
@@ -124,12 +145,15 @@ unsafe def main (args : List String) : IO UInt32 := do
           return 2
       pure acc
   IO.eprintln s!"export-meridian: importing {moduleNames.size} module(s): {moduleNames.toList}"
+  if !scopeNames.isEmpty then
+    IO.eprintln s!"export-meridian: scope = {scopeNames.toList} (keeping only these \
+      module roots; edges to out-of-scope targets are still emitted)"
   initSearchPath (← findSysroot)
   Lean.enableInitializersExecution
   let imports : Array Import := moduleNames.map (fun n => { module := n })
   let t0 ← IO.monoMsNow
   let (decls, mods, trips) ← withImportModules imports (opts := {}) (trustLevel := 1024)
-    fun env => runDumpIO env outPath (fun env n _ => includeConst env n)
+    fun env => runDumpIO env outPath (fun env n _ => includeConst env n && moduleInScope env scopeNames n)
   let elapsed := (← IO.monoMsNow) - t0
   IO.eprintln s!"export-meridian: wrote {decls} declarations across {mods} modules \
     ({trips} triples) to {outPath} in {elapsed} ms"
