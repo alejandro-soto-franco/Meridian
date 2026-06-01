@@ -200,19 +200,30 @@ def includeConst (env : Environment) (name : Name) : Bool :=
 /-! ## Dependency collection (extended) -/
 
 /-- Extension of `Meridian.Core.SorryExtract.collectDeps` that also includes
-    the structure name of each `.proj` node. The base version drops it. -/
+    the structure name of each `.proj` node. The base version drops it.
+
+    Carries an `ExprSet` visited-set so shared subterms of the hash-consed `Expr`
+    DAG are walked once; the previous naive recursion revisited them and was
+    exponential (the bottleneck in the full-Mathlib export). Core's
+    `getUsedConstantsAsSet` is not reused here because it does not surface the
+    `.proj` structure name. -/
 private partial def collectDepsExt (e : Expr) : NameSet :=
-  go e {}
+  (go e ({}, ({} : ExprSet))).1
 where
-  go : Expr → NameSet → NameSet
-  | .const n _,        acc => acc.insert n
-  | .app f a,          acc => go a (go f acc)
-  | .lam _ d b _,      acc => go b (go d acc)
-  | .forallE _ d b _,  acc => go b (go d acc)
-  | .letE _ t v b _,   acc => go b (go v (go t acc))
-  | .mdata _ e,        acc => go e acc
-  | .proj sn _ e,      acc => go e (acc.insert sn)
-  | _,                 acc => acc
+  go (e : Expr) (acc : NameSet × ExprSet) : NameSet × ExprSet :=
+    let (deps, seen) := acc
+    if seen.contains e then (deps, seen)
+    else
+      let acc := (deps, seen.insert e)
+      match e with
+      | .const n _        => (acc.1.insert n, acc.2)
+      | .app f a          => go a (go f acc)
+      | .lam _ d b _      => go b (go d acc)
+      | .forallE _ d b _  => go b (go d acc)
+      | .letE _ t v b _   => go b (go v (go t acc))
+      | .mdata _ e        => go e acc
+      | .proj sn _ e      => let (d, s) := go e acc; (d.insert sn, s)
+      | _                 => acc
 
 /-! ## Turtle escaping -/
 
@@ -264,18 +275,22 @@ private def renderDecl (b : Buf) (env : Environment) (name : Name)
   let cls  := classOf info
   let ns   := nameToDotted name.getPrefix
   let fullName := nameToDotted name
-  let hasS := match info.value? with
-    | some v => containsSorry v
-    | none   => false
-  let sorryCount := match info.value? with
-    | some v => (collectSorryGoals v).length
-    | none   => 0
   let tSize := exprSize info.type
 
   let typeDeps := collectDepsExt info.type
   let valDeps := match info.value? with
     | some v => collectDepsExt v
     | none   => {}
+  -- `sorryAx` is a constant, so its membership in the value's dep set is exactly
+  -- `containsSorry value`; reuse `valDeps` rather than a second full Expr walk.
+  let hasS := valDeps.contains ``sorryAx
+  -- Only walk for sorry goals when a sorry is actually present (≈never across
+  -- Mathlib), sparing every proved declaration a redundant traversal.
+  let sorryCount := if hasS then
+      match info.value? with
+      | some v => (collectSorryGoals v).length
+      | none   => 0
+    else 0
   let directDeps : List Name :=
     (typeDeps.merge valDeps).toList
       |>.filter (fun n => !n.isInternal && n != name)

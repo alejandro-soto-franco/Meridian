@@ -62,17 +62,12 @@ structure MeridianDecl where
 
 /-! ## Sorry Detection -/
 
-/-- Check whether an expression tree contains `sorryAx`. -/
-partial def containsSorry (e : Expr) : Bool :=
-  match e with
-  | .const n _       => n == ``sorryAx
-  | .app f a         => containsSorry f || containsSorry a
-  | .lam _ d b _     => containsSorry d || containsSorry b
-  | .forallE _ d b _ => containsSorry d || containsSorry b
-  | .letE _ t v b _  => containsSorry t || containsSorry v || containsSorry b
-  | .mdata _ e       => containsSorry e
-  | .proj _ _ e      => containsSorry e
-  | _                => false
+/-- Check whether an expression tree contains `sorryAx`.
+    `Expr.find?` walks with a `PtrSet` visited-set, so this short-circuits and is
+    DAG-aware; the previous naive structural recursion revisited shared subterms
+    and was exponential on hash-consed `Expr` DAGs. -/
+def containsSorry (e : Expr) : Bool :=
+  (e.find? (·.isConstOf ``sorryAx)).isSome
 
 /-- Collect the type arguments of every `sorryAx` application in an expression.
     `sorryAx` has signature `(α : Sort u) → Bool → α`, so `@sorryAx α b`
@@ -88,19 +83,13 @@ partial def collectSorryGoals : Expr → List Expr
   | .proj _ _ e    => collectSorryGoals e
   | _              => []
 
-/-- Collect all constant `Name`s referenced in an expression. -/
-partial def collectDeps (e : Expr) : NameSet :=
-  go e {}
-where
-  go : Expr → NameSet → NameSet
-  | .const n _,       acc => acc.insert n
-  | .app f a,         acc => go a (go f acc)
-  | .lam _ d b _,     acc => go b (go d acc)
-  | .forallE _ d b _, acc => go b (go d acc)
-  | .letE _ t v b _,  acc => go b (go v (go t acc))
-  | .mdata _ e,       acc => go e acc
-  | .proj _ _ e,      acc => go e acc
-  | _,                acc => acc
+/-- Collect all constant `Name`s referenced in an expression.
+    Delegates to core's `Expr.getUsedConstantsAsSet`, which folds with a `PtrSet`
+    visited-set (DAG-aware); the previous naive recursion was exponential on
+    shared subterms. Semantics are identical: every `.const` name, no `.proj`
+    structure names. -/
+def collectDeps (e : Expr) : NameSet :=
+  e.getUsedConstantsAsSet
 
 /-- Return true if `declName` belongs to a user-defined module (not Lean, Init, Mathlib, etc). -/
 def isUserDecl (env : Environment) (declName : Name) : Bool :=
