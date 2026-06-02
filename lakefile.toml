@@ -27,6 +27,18 @@ name = "export-meridian"
 root = "Meridian.Drivers.ExportMain"
 supportInterpreter = true
 
+# `lake exe lean-goal-at <SourceFile.lean> <line> <col>` re-elaborates the
+# given file and prints the primary tactic goal's type at the position in
+# `Expr.dbgToString` debug form (the same lexical space as the exporter's
+# `mer:typeSignature`). Phase 2 Task 13 of the lean-suggest plan; the Rust
+# wiring (Task 14) shells out to this binary. `supportInterpreter = true`
+# because the driver runs Lean's frontend (header import + command
+# elaboration) at runtime.
+[[lean_exe]]
+name = "lean-goal-at"
+root = "Meridian.Drivers.GoalAt"
+supportInterpreter = true
+
 [[lean_lib]]
 name = "TestCore"
 srcDir = "test"
