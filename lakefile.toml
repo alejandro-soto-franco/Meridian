@@ -9,7 +9,7 @@ relaxedAutoImplicit = false
 [[require]]
 name = "mathlib"
 path = "../mathlib4-fork-stable"
-# Shared mathlib worktree (v4.29.1). See feedback_lean_caches_symlink_convention
+# Shared mathlib worktree (v4.31.0-rc1). See feedback_lean_caches_symlink_convention
 # in ~/.claude memory for the rationale.
 
 [[lean_lib]]
