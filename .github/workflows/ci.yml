@@ -11,3 +11,9 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           build: true
+          # Force `lake exe cache get`: the mathlib dependency is a personal fork,
+          # so lean-action's auto-detection reports "not downstream of Mathlib" and
+          # skips the cache, compiling all of mathlib from source. The fork only adds
+          # two files on top of upstream, so the content-addressed cache still hits
+          # every unchanged module; only the custom files build locally.
+          use-mathlib-cache: true
