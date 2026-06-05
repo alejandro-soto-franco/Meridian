@@ -8,9 +8,8 @@ relaxedAutoImplicit = false
 
 [[require]]
 name = "mathlib"
-path = "../mathlib4-fork-stable"
-# Shared mathlib worktree (v4.31.0-rc1). See feedback_lean_caches_symlink_convention
-# in ~/.claude memory for the rationale.
+git = "https://github.com/alejandro-soto-franco/mathlib4.git"
+rev = "164c79e9464d761a0385234514e4c81b49332dbf"
 
 [[lean_lib]]
 name = "Meridian"
