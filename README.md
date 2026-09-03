@@ -1,6 +1,6 @@
 # Meridian
 
-Open-source Lean 4 metaprogramming toolkit for mathematical formalisation. Proof search, sorry extraction, dependency analysis, Mathlib coverage reports, and domain-specific PDE tactics. Runs locally, no network calls, no data leaves your machine.
+Open-source Lean 4 metaprogramming toolkit for mathematical formalisation. Proof search, sorry extraction, dependency analysis, Mathlib coverage reports, and domain-specific PDE tactics. Runs locally, with no network calls and no data leaving the machine.
 
 ## Installation
 
@@ -121,7 +121,7 @@ The `examples/sparql/` directory ships five queries:
 | `04-direct-dependents-of.sparql` | All declarations directly depending on a chosen target |
 | `05-complexity-distribution.sparql` | Histogram of theorem type-size buckets |
 
-The queries are reasoning-agnostic — they use `rdfs:subClassOf*` property paths so they work whether or not the store materialises subclass inferences. For best results, load `Ontology/meridian.ttl` into the same dataset as the dump.
+The queries are reasoning-agnostic: they use `rdfs:subClassOf*` property paths, so they work whether or not the store materialises subclass inferences. Load `Ontology/meridian.ttl` into the same dataset as the dump, so the store answers with the class hierarchy in place.
 
 Run any of them against the loaded endpoint:
 
@@ -133,7 +133,7 @@ curl -fsS -H 'Accept: application/sparql-results+json' \
 
 ### Validation
 
-`scripts/validate-dump.py` runs three layers of validation against any dump:
+`scripts/validate-dump.py` runs five checks against any dump:
 
 1. Turtle parses cleanly via [rdflib](https://rdflib.readthedocs.io/).
 2. Class counts (theorems / definitions / axioms / inductives / constructors / recursors / opaques / modules / sorry-bearing).
@@ -173,10 +173,10 @@ open Meridian.Domain.GMT
 -- densityRatio, monotonicity_of_stationary
 ```
 
-## License
+## Licence
 
-Apache 2.0. Copyright 2026 Alejandro Jose Soto Franco.
+Apache 2.0. Copyright 2026 Alejandro José Soto Franco.
 
 ## Design
 
-Meridian runs entirely on your machine. No network calls, no hosted API, no third-party servers. Your proof code stays local.
+Meridian runs entirely on your machine. It makes no network call and reaches no hosted API or third-party server, so the proof code stays where it was written.
