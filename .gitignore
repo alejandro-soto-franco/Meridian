@@ -5,6 +5,5 @@ build/
 *.olean
 *.ilean
 *.trace
-docs/superpowers/
 docs/specs/
 out/
